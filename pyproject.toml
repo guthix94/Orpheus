@@ -45,6 +45,10 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     "python-dotenv>=1.0.0",
 
+    # Auth (Supabase JWT verification)
+    "PyJWT[crypto]>=2.8.0",
+    "httpx>=0.26.0",
+
     # Email
     "sendgrid>=6.11.0",
 ]
