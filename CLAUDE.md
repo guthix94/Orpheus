@@ -56,8 +56,9 @@ Orpheus (the app — daily companion for music teachers)
                    │
 ┌──────────────────▼──────────────────────────┐
 │              DATA STORES                     │
-│  PostgreSQL: students, lessons, summaries    │
-│  File storage: temp audio, MusicXML scores   │
+│  Supabase PostgreSQL: all structured data    │
+│  Supabase Storage: temp audio, score files   │
+│  Supabase Auth: teacher accounts             │
 └─────────────────────────────────────────────┘
 ```
 
@@ -67,7 +68,9 @@ Orpheus (the app — daily companion for music teachers)
 |---|---|---|
 | API server | Python 3.11+ / FastAPI | Audio analysis ecosystem is Python-native |
 | Task queue | Celery with Redis (or RQ for simplicity in MVP) | Audio processing takes 3-5 min, must be async |
-| Database | PostgreSQL (SQLite acceptable for early prototype) | Structured relational data, future graph queries |
+| Database | Supabase (hosted PostgreSQL) | Managed DB + auth + file storage in one platform |
+| ORM | SQLAlchemy (connecting to Supabase PostgreSQL) | Complex queries, no vendor lock-in on data layer |
+| Auth | Supabase Auth | Teacher login/signup out of the box |
 | Audio analysis | librosa, madmom | Industry-standard open source, pip installable |
 | Source separation | Demucs (torchaudio / Meta) | Best open-source source separation model |
 | Speech-to-text | OpenAI Whisper (local, openai-whisper package) | Free, self-hosted, 99 languages |
@@ -76,7 +79,7 @@ Orpheus (the app — daily companion for music teachers)
 | LLM | Anthropic Claude API | Narrative generation from structured data |
 | Frontend | Next.js (web app, mobile-responsive) | Fast to build, works on phone browsers |
 | Audio recording | MediaRecorder API (browser) | No native app needed for MVP |
-| File storage | Local filesystem (S3 in production) | Process-and-delete pattern |
+| File storage | Supabase Storage | Temp audio uploads, score files, process-and-delete |
 | Email | SendGrid API (or SMTP for MVP) | Parent communications |
 
 ## Project Structure
@@ -85,13 +88,13 @@ Orpheus (the app — daily companion for music teachers)
 orpheus/
 ├── CLAUDE.md                    # This file
 ├── README.md
-├── docker-compose.yml           # PostgreSQL, Redis
+├── docker-compose.yml           # Redis (for task queue)
 ├── pyproject.toml               # Python dependencies
 │
 ├── server/                      # FastAPI backend
 │   ├── main.py                  # App entry point, CORS, lifespan
-│   ├── config.py                # Environment variables, settings
-│   ├── database.py              # SQLAlchemy setup, session management
+│   ├── config.py                # Environment variables, Supabase client init
+│   ├── database.py              # SQLAlchemy setup, Supabase connection
 │   │
 │   ├── models/                  # SQLAlchemy ORM models
 │   │   ├── student.py           # Student profile
@@ -118,7 +121,7 @@ orpheus/
 │   │   └── export.py            # Student record export (PDF, JSON)
 │   │
 │   └── services/                # Business logic
-│       ├── audio_upload.py      # Handle incoming audio files
+│       ├── audio_upload.py      # Upload audio to Supabase Storage
 │       ├── lesson_service.py    # Lesson lifecycle management
 │       └── export_service.py    # Generate student record PDF exports
 │
@@ -240,7 +243,7 @@ class Lesson:
     started_at: datetime
     ended_at: datetime
     duration_seconds: int
-    audio_file_path: str | None      # Temporary, deleted after processing
+    audio_file_path: str | None      # Supabase Storage path, deleted after processing
     status: str                      # "recording", "processing", "completed", "failed"
     summary_style: str               # "standard" or "formal" (teacher preference)
     # Populated after processing:
@@ -811,47 +814,71 @@ const startRecording = async () => {
 
 ```bash
 # .env file
-DATABASE_URL=postgresql://orpheus:password@localhost:5432/orpheus
+
+# Supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=eyJ...                  # Public anon key (safe for frontend)
+SUPABASE_SERVICE_ROLE_KEY=eyJ...           # Private key (server-side only, never expose)
+DATABASE_URL=postgresql://postgres:[password]@db.[project-ref].supabase.co:5432/postgres
+
+# Task queue
 REDIS_URL=redis://localhost:6379/0
+
+# APIs
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Audio processing
 WHISPER_MODEL_SIZE=base          # tiny/base/small/medium/large-v3
 DEMUCS_MODEL=htdemucs            # htdemucs or htdemucs_ft
-AUDIO_STORAGE_PATH=./storage/audio
 SCORES_PATH=./scores/data
-SENDGRID_API_KEY=SG...           # Optional, for parent emails
+
+# Optional
+SENDGRID_API_KEY=SG...           # For parent emails
 ```
 
 ## Development Workflow
 
 ### Getting Started
 ```bash
-# 1. Clone and install Python deps
+# 1. Create a Supabase project at https://supabase.com
+#    Copy your project URL, anon key, service role key, and database URL
+#    into .env (see Environment Variables above)
+
+# 2. Install Python deps
 pip install fastapi uvicorn sqlalchemy asyncpg celery redis
+pip install supabase                       # Supabase Python client (for auth + storage)
 pip install librosa madmom music21 openai-whisper
 pip install torch torchaudio demucs
 pip install anthropic rapidfuzz
 
-# 2. Start infrastructure
-docker-compose up -d  # PostgreSQL + Redis
+# 3. Start Redis for task queue
+docker-compose up -d  # Redis only
 
-# 3. Initialize database
+# 4. Run database migrations (creates tables in Supabase PostgreSQL)
 python -m server.database init
 
-# 4. Seed score database with initial repertoire
+# 5. Seed score database with initial repertoire
 python scripts/seed_scores.py
 
-# 5. Pre-compute reference chromas for all scores
+# 6. Pre-compute reference chromas for all scores
 python scripts/generate_chroma_cache.py
 
-# 6. Start API server
+# 7. Start API server
 uvicorn server.main:app --reload
 
-# 7. Start processing worker
+# 8. Start processing worker
 celery -A processing.worker worker --loglevel=info
 
-# 8. Start frontend
+# 9. Start frontend
 cd frontend && npm install && npm run dev
 ```
+
+### Supabase Setup
+After creating your project, configure these in the Supabase dashboard:
+1. **Storage:** Create a bucket called `audio-uploads` (private, process-and-delete)
+2. **Storage:** Create a bucket called `scores` (private, persistent)
+3. **Auth:** Enable email/password sign-up for teachers
+4. **RLS:** Enable Row Level Security on all tables — teachers should only see their own data
 
 ### Testing Pipeline with Sample Audio
 ```bash
@@ -924,7 +951,7 @@ python -m processing.pipeline --input test_lesson.wav --student "Test Student"
 
 6. **Whisper can hallucinate on music audio.** Even after source separation, the speech track may contain instrument bleed. Whisper sometimes "transcribes" musical sounds as words. Filter transcript segments with low confidence or nonsensical content.
 
-7. **Don't store raw audio longer than needed.** Process-and-delete is the default. Delete audio files after successful pipeline completion. Only structured data (timeline JSON, summaries) persists.
+7. **Don't store raw audio longer than needed.** Process-and-delete is the default. Delete audio files from Supabase Storage after successful pipeline completion. Only structured data (timeline JSON, summaries) persists in the database.
 
 ## Reference: Full Blueprint
 
