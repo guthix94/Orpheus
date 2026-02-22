@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
-    # Whisper
-    whisper_model_size: str = "base"
+    # Groq (Whisper transcription)
+    groq_api_key: str = ""
 
     # Demucs
     demucs_model: str = "htdemucs"

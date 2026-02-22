@@ -86,7 +86,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
             logger.info("Pipeline[%s]: starting transcription", lesson_id)
             try:
-                result = transcribe(audio_path, model_size=settings.whisper_model_size)
+                result = transcribe(audio_path, api_key=settings.groq_api_key or None)
                 transcript_text = result.full_text
                 transcript_segments = [asdict(s) for s in result.segments]
                 transcription_duration = result.duration_seconds
@@ -127,7 +127,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             }
             lesson.processing_metadata = {
                 "pipeline_version": "mvp-speech-to-summary",
-                "whisper_model": settings.whisper_model_size,
+                "whisper_model": "groq/whisper-large-v3",
                 "transcription_seconds": round(transcription_duration, 2),
                 "narrative_seconds": round(narrative_duration, 2),
                 "total_seconds": round(time.time() - pipeline_start, 2),
