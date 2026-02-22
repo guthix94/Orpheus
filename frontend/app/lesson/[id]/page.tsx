@@ -1,22 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Check,
-  Lock,
+  Loader2,
   Music,
+  Pencil,
   Send,
   ShieldCheck,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import FadeIn from "@/components/ui/FadeIn";
-import AssignmentCard, {
-  AssignmentCardSkeleton,
-} from "@/components/AssignmentCard";
+import { AssignmentCardSkeleton } from "@/components/AssignmentCard";
 import SendToParentModal from "@/components/SendToParentModal";
+import EditableChip, { AddPieceButton } from "@/components/EditableChip";
+import EditableAssignmentCard, {
+  AddAssignmentForm,
+  type Assignment,
+} from "@/components/EditableAssignmentCard";
 
 /* ── Types ── */
 
@@ -31,11 +34,8 @@ interface Lesson {
   teacher_summary: string | null;
   parent_summary: string | null;
   suggested_assignments:
-    | { description: string; details?: string }[]
+    | { id?: string; description: string; details?: string }[]
     | null;
-  confirmed_at: string | null;
-  is_locked: boolean;
-  amendments: { text: string; created_at: string }[] | null;
 }
 
 interface Student {
@@ -68,6 +68,25 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
+/* ── Toast ── */
+
+function Toast({ message, type, onDone }: { message: string; type: "success" | "error"; onDone: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 2500);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
+  return (
+    <div
+      className={`fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-[var(--radius-button)] px-4 py-2.5 text-sm font-medium shadow-card-hover animate-[slide-up_0.2s_ease-out] ${
+        type === "success" ? "bg-success text-white" : "bg-error text-white"
+      }`}
+    >
+      {message}
+    </div>
+  );
+}
+
 /* ── Page ── */
 
 export default function LessonSummaryPage() {
@@ -79,10 +98,20 @@ export default function LessonSummaryPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<SummaryTab>("teacher");
-  const [confirming, setConfirming] = useState(false);
-  const [amendmentText, setAmendmentText] = useState("");
-  const [savingAmendment, setSavingAmendment] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+
+  // Inline editing state for summaries
+  const [editingTeacher, setEditingTeacher] = useState(false);
+  const [editingParent, setEditingParent] = useState(false);
+  const [teacherDraft, setTeacherDraft] = useState("");
+  const [parentDraft, setParentDraft] = useState("");
+  const [savingSummary, setSavingSummary] = useState(false);
+
+  // Toast
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  // Saving spinners
+  const [savingPieces, setSavingPieces] = useState(false);
 
   // Fetch lesson + student
   useEffect(() => {
@@ -123,38 +152,182 @@ export default function LessonSummaryPage() {
     return () => clearInterval(interval);
   }, [lesson?.status, id]);
 
-  // Confirm
-  const handleConfirm = async () => {
-    if (!lesson || confirming) return;
-    setConfirming(true);
+  /* ── Pieces CRUD ── */
+
+  const patchPieces = async (newPieces: string[]) => {
+    setSavingPieces(true);
+    // Optimistic
+    setLesson((prev) => prev ? { ...prev, pieces_detected: newPieces } : prev);
     try {
-      const updated = await api<Lesson>(`/api/lessons/${id}/confirm`, {
-        method: "POST",
-        body: JSON.stringify({}),
+      await api(`/api/lessons/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ pieces_detected: newPieces }),
       });
-      setLesson(updated);
     } catch {
-      /* silently fail — user sees no change */
+      // Revert on failure
+      setLesson((prev) => prev ? { ...prev, pieces_detected: pieces } : prev);
+      setToast({ message: "Failed to update pieces", type: "error" });
     } finally {
-      setConfirming(false);
+      setSavingPieces(false);
     }
   };
 
-  // Add amendment
-  const handleSaveAmendment = async () => {
-    if (!lesson || !amendmentText.trim() || savingAmendment) return;
-    setSavingAmendment(true);
+  const handleEditPiece = (index: number, newValue: string) => {
+    const updated = [...pieces];
+    updated[index] = newValue;
+    patchPieces(updated);
+  };
+
+  const handleRemovePiece = (index: number) => {
+    patchPieces(pieces.filter((_, i) => i !== index));
+  };
+
+  const handleAddPiece = (value: string) => {
+    patchPieces([...pieces, value]);
+  };
+
+  /* ── Summary editing ── */
+
+  const handleSaveTeacherSummary = async () => {
+    setSavingSummary(true);
+    const original = lesson?.teacher_summary;
+    setLesson((prev) => prev ? { ...prev, teacher_summary: teacherDraft } : prev);
     try {
-      const updated = await api<Lesson>(`/api/lessons/${id}/amendments`, {
-        method: "POST",
-        body: JSON.stringify({ text: amendmentText.trim() }),
+      await api(`/api/lessons/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ teacher_summary: teacherDraft }),
       });
-      setLesson(updated);
-      setAmendmentText("");
+      setEditingTeacher(false);
+      setToast({ message: "Teacher notes saved", type: "success" });
     } catch {
-      /* silently fail */
+      setLesson((prev) => prev ? { ...prev, teacher_summary: original ?? null } : prev);
+      setToast({ message: "Failed to save", type: "error" });
     } finally {
-      setSavingAmendment(false);
+      setSavingSummary(false);
+    }
+  };
+
+  const handleSaveParentSummary = async () => {
+    setSavingSummary(true);
+    const original = lesson?.parent_summary;
+    setLesson((prev) => prev ? { ...prev, parent_summary: parentDraft } : prev);
+    try {
+      await api(`/api/lessons/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ parent_summary: parentDraft }),
+      });
+      setEditingParent(false);
+      setToast({ message: "Parent message saved", type: "success" });
+    } catch {
+      setLesson((prev) => prev ? { ...prev, parent_summary: original ?? null } : prev);
+      setToast({ message: "Failed to save", type: "error" });
+    } finally {
+      setSavingSummary(false);
+    }
+  };
+
+  /* ── Assignments CRUD ── */
+
+  const handleAddAssignment = async (a: { description: string; details: string }) => {
+    const temp: Assignment = { description: a.description, details: a.details || null };
+    // Optimistic
+    setLesson((prev) => {
+      if (!prev) return prev;
+      return { ...prev, suggested_assignments: [...(prev.suggested_assignments ?? []), temp] };
+    });
+    try {
+      const updated = await api<Lesson>(`/api/lessons/${id}/assignments`, {
+        method: "POST",
+        body: JSON.stringify(a),
+      });
+      // If the server returns the full lesson, use it. Otherwise keep optimistic.
+      if (updated?.suggested_assignments) setLesson(updated);
+      setToast({ message: "Assignment added", type: "success" });
+    } catch {
+      // Revert
+      setLesson((prev) => {
+        if (!prev) return prev;
+        const reverted = (prev.suggested_assignments ?? []).slice(0, -1);
+        return { ...prev, suggested_assignments: reverted };
+      });
+      setToast({ message: "Failed to add assignment", type: "error" });
+    }
+  };
+
+  const handleEditAssignment = async (
+    index: number,
+    a: { description: string; details: string },
+  ) => {
+    const original = assignments[index];
+    const aid = original.id;
+
+    // Optimistic
+    setLesson((prev) => {
+      if (!prev) return prev;
+      const updated = [...(prev.suggested_assignments ?? [])];
+      updated[index] = { ...updated[index], ...a };
+      return { ...prev, suggested_assignments: updated };
+    });
+
+    try {
+      if (aid) {
+        await api(`/api/lessons/${id}/assignments/${aid}`, {
+          method: "PATCH",
+          body: JSON.stringify(a),
+        });
+      } else {
+        // No id — patch full lesson
+        const updated = [...assignments];
+        updated[index] = { ...updated[index], ...a };
+        await api(`/api/lessons/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ suggested_assignments: updated }),
+        });
+      }
+      setToast({ message: "Assignment updated", type: "success" });
+    } catch {
+      // Revert
+      setLesson((prev) => {
+        if (!prev) return prev;
+        const reverted = [...(prev.suggested_assignments ?? [])];
+        reverted[index] = original;
+        return { ...prev, suggested_assignments: reverted };
+      });
+      setToast({ message: "Failed to update assignment", type: "error" });
+    }
+  };
+
+  const handleDeleteAssignment = async (index: number) => {
+    const original = assignments[index];
+    const aid = original.id;
+
+    // Optimistic
+    setLesson((prev) => {
+      if (!prev) return prev;
+      const filtered = (prev.suggested_assignments ?? []).filter((_, i) => i !== index);
+      return { ...prev, suggested_assignments: filtered };
+    });
+    setToast({ message: "Assignment deleted", type: "success" });
+
+    try {
+      if (aid) {
+        await api(`/api/lessons/${id}/assignments/${aid}`, { method: "DELETE" });
+      } else {
+        const updated = assignments.filter((_, i) => i !== index);
+        await api(`/api/lessons/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ suggested_assignments: updated }),
+        });
+      }
+    } catch {
+      // Revert
+      setLesson((prev) => {
+        if (!prev) return prev;
+        const reverted = [...(prev.suggested_assignments ?? [])];
+        reverted.splice(index, 0, original);
+        return { ...prev, suggested_assignments: reverted };
+      });
+      setToast({ message: "Failed to delete assignment", type: "error" });
     }
   };
 
@@ -167,9 +340,6 @@ export default function LessonSummaryPage() {
     : null;
   const pieces = lesson?.pieces_detected ?? [];
   const assignments = lesson?.suggested_assignments ?? [];
-  const isLocked = lesson?.is_locked ?? false;
-  const confirmedAt = lesson?.confirmed_at;
-  const amendments = lesson?.amendments ?? [];
 
   const dateStr = lesson
     ? new Date(lesson.started_at).toLocaleDateString("en-US", {
@@ -207,6 +377,15 @@ export default function LessonSummaryPage() {
 
   return (
     <div className="space-y-6">
+      {/* ── Toast ── */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDone={() => setToast(null)}
+        />
+      )}
+
       {/* ── Back button ── */}
       <FadeIn>
         <Link
@@ -231,22 +410,23 @@ export default function LessonSummaryPage() {
         </div>
       </FadeIn>
 
-      {/* ── Piece chips ── */}
-      {pieces.length > 0 && (
-        <FadeIn delay={100}>
-          <div className="flex flex-wrap gap-2">
-            {pieces.map((p) => (
-              <span
-                key={p}
-                className="inline-flex items-center gap-1.5 rounded-[var(--radius-chip)] bg-amber-glow px-3 py-1 text-xs font-medium text-amber"
-              >
-                <Music size={12} />
-                {p}
-              </span>
-            ))}
-          </div>
-        </FadeIn>
-      )}
+      {/* ── Piece chips (editable) ── */}
+      <FadeIn delay={100}>
+        <div className="flex flex-wrap items-center gap-2">
+          {pieces.map((p, i) => (
+            <EditableChip
+              key={`${p}-${i}`}
+              value={p}
+              onEdit={(v) => handleEditPiece(i, v)}
+              onRemove={() => handleRemovePiece(i)}
+            />
+          ))}
+          <AddPieceButton onAdd={handleAddPiece} />
+          {savingPieces && (
+            <Loader2 size={14} className="animate-spin text-amber" />
+          )}
+        </div>
+      </FadeIn>
 
       {/* ── Two-column layout ── */}
       <div className="flex flex-col gap-6 md:flex-row">
@@ -259,19 +439,35 @@ export default function LessonSummaryPage() {
 
           {/* Summary card */}
           <FadeIn delay={200}>
-            <div className="rounded-2xl border border-sand bg-warm-white p-6 shadow-card">
+            <div className="relative rounded-2xl border border-sand bg-warm-white p-6 shadow-card">
               {lesson?.status === "processing" ? (
                 <SummarySkeleton />
               ) : activeTab === "teacher" ? (
                 <div>
-                  {isLocked && (
-                    <div className="mb-4 flex items-center gap-1.5 text-xs text-stone">
-                      <Lock size={12} />
-                      Confirmed &mdash; original summary is locked
-                    </div>
+                  {/* Edit button */}
+                  {teacherText && !editingTeacher && (
+                    <button
+                      onClick={() => {
+                        setTeacherDraft(teacherText);
+                        setEditingTeacher(true);
+                      }}
+                      className="absolute right-4 top-4 rounded-full p-1.5 text-mist transition-colors hover:bg-amber-glow hover:text-amber"
+                      aria-label="Edit teacher notes"
+                    >
+                      <Pencil size={14} />
+                    </button>
                   )}
-                  {teacherText ? (
-                    <p className="whitespace-pre-wrap text-sm leading-[1.75] text-charcoal">
+
+                  {editingTeacher ? (
+                    <EditableSummary
+                      draft={teacherDraft}
+                      onChange={setTeacherDraft}
+                      onSave={handleSaveTeacherSummary}
+                      onCancel={() => setEditingTeacher(false)}
+                      saving={savingSummary}
+                    />
+                  ) : teacherText ? (
+                    <p className="whitespace-pre-wrap text-sm leading-[1.75] text-charcoal pr-8">
                       {teacherText}
                     </p>
                   ) : (
@@ -282,11 +478,35 @@ export default function LessonSummaryPage() {
                 </div>
               ) : (
                 <div>
-                  <div className="mb-4 inline-flex items-center gap-1.5 rounded-[var(--radius-chip)] bg-success-bg px-3 py-1 text-[11px] font-semibold text-success">
-                    <ShieldCheck size={12} />
-                    Parent-friendly &mdash; no negative language
+                  <div className="flex items-start justify-between">
+                    <div className="mb-4 inline-flex items-center gap-1.5 rounded-[var(--radius-chip)] bg-success-bg px-3 py-1 text-[11px] font-semibold text-success">
+                      <ShieldCheck size={12} />
+                      Parent-friendly &mdash; no negative language
+                    </div>
+                    {/* Edit button */}
+                    {parentText && !editingParent && (
+                      <button
+                        onClick={() => {
+                          setParentDraft(parentText);
+                          setEditingParent(true);
+                        }}
+                        className="rounded-full p-1.5 text-mist transition-colors hover:bg-amber-glow hover:text-amber"
+                        aria-label="Edit parent message"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    )}
                   </div>
-                  {parentText ? (
+
+                  {editingParent ? (
+                    <EditableSummary
+                      draft={parentDraft}
+                      onChange={setParentDraft}
+                      onSave={handleSaveParentSummary}
+                      onCancel={() => setEditingParent(false)}
+                      saving={savingSummary}
+                    />
+                  ) : parentText ? (
                     <p className="whitespace-pre-wrap text-sm leading-[1.75] text-charcoal">
                       {parentText}
                     </p>
@@ -299,54 +519,6 @@ export default function LessonSummaryPage() {
               )}
             </div>
           </FadeIn>
-
-          {/* Amendments section (after confirmation) */}
-          {isLocked && (
-            <FadeIn delay={250}>
-              <div className="space-y-3">
-                {amendments.length > 0 && (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-widest text-stone">
-                      Amendments
-                    </h3>
-                    {amendments.map((a, i) => (
-                      <div
-                        key={i}
-                        className="rounded-[var(--radius-button)] border border-sand bg-ivory px-4 py-3"
-                      >
-                        <p className="text-sm text-charcoal">{a.text}</p>
-                        <p className="mt-1 text-[11px] text-mist">
-                          {new Date(a.created_at).toLocaleString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div>
-                  <textarea
-                    value={amendmentText}
-                    onChange={(e) => setAmendmentText(e.target.value)}
-                    placeholder="Add a note or amendment..."
-                    rows={3}
-                    className="w-full resize-none rounded-[var(--radius-button)] border border-sand bg-warm-white px-3.5 py-2.5 text-sm text-charcoal placeholder:text-mist focus:outline-none focus:ring-2 focus:ring-amber/40"
-                  />
-                  <button
-                    onClick={handleSaveAmendment}
-                    disabled={!amendmentText.trim() || savingAmendment}
-                    className="mt-2 rounded-[var(--radius-button)] bg-charcoal px-4 py-2 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover disabled:opacity-50"
-                  >
-                    {savingAmendment ? "Saving..." : "Save Amendment"}
-                  </button>
-                </div>
-              </div>
-            </FadeIn>
-          )}
         </div>
 
         {/* ── Right sidebar ── */}
@@ -363,77 +535,42 @@ export default function LessonSummaryPage() {
               <AssignmentCardSkeleton />
               <AssignmentCardSkeleton />
             </div>
-          ) : assignments.length > 0 ? (
+          ) : (
             <div className="space-y-3">
               {assignments.map((a, i) => (
-                <FadeIn key={i} delay={250 + i * 50}>
-                  <AssignmentCard
-                    description={a.description}
-                    details={a.details ?? null}
-                    status="assigned"
-                    weeksPersisted={1}
+                <FadeIn key={a.id ?? `a-${i}`} delay={250 + i * 50}>
+                  <EditableAssignmentCard
+                    assignment={a}
+                    onSave={(updated) => handleEditAssignment(i, updated)}
+                    onDelete={() => handleDeleteAssignment(i)}
                   />
                 </FadeIn>
               ))}
+
+              {assignments.length === 0 && lesson?.status === "completed" && (
+                <FadeIn delay={250}>
+                  <p className="text-sm text-stone">
+                    No assignments yet.
+                  </p>
+                </FadeIn>
+              )}
+
+              <FadeIn delay={250 + assignments.length * 50}>
+                <AddAssignmentForm onAdd={handleAddAssignment} />
+              </FadeIn>
             </div>
-          ) : (
-            <FadeIn delay={250}>
-              <p className="text-sm text-stone">
-                {lesson?.status === "completed"
-                  ? "No assignments suggested for this lesson."
-                  : "Assignments will appear after processing."}
-              </p>
-            </FadeIn>
           )}
 
-          {/* Action buttons */}
+          {/* Action button — Send to Parent only */}
           <FadeIn delay={300}>
-            {confirmedAt ? (
-              /* ── Confirmed banner ── */
-              <div className="rounded-[var(--radius-card)] bg-success-bg px-4 py-3.5">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-success">
-                    <Check size={12} className="text-white" strokeWidth={3} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-success">
-                      Summary confirmed &amp; locked
-                    </p>
-                    <p className="text-[11px] text-success/70">
-                      {new Date(confirmedAt).toLocaleString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              /* ── Action buttons ── */
-              <div className="space-y-2.5">
-                <button
-                  onClick={() => setModalOpen(true)}
-                  disabled={!parentText}
-                  className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] bg-charcoal px-5 py-3 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover disabled:opacity-50"
-                >
-                  <Send size={15} />
-                  Send to Parent
-                </button>
-
-                <button
-                  onClick={handleConfirm}
-                  disabled={
-                    confirming || lesson?.status !== "completed"
-                  }
-                  className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] border border-sand bg-cream px-5 py-3 text-sm font-semibold text-charcoal transition-shadow hover:shadow-card-hover disabled:opacity-50"
-                >
-                  <Lock size={15} />
-                  {confirming ? "Confirming..." : "Confirm & Lock"}
-                </button>
-              </div>
-            )}
+            <button
+              onClick={() => setModalOpen(true)}
+              disabled={!parentText}
+              className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] bg-charcoal px-5 py-3 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover disabled:opacity-50"
+            >
+              <Send size={15} />
+              Send to Parent
+            </button>
           </FadeIn>
         </div>
       </div>
@@ -447,8 +584,77 @@ export default function LessonSummaryPage() {
           studentId={student.id}
           parentSummary={parentText}
           parentEmail={student.parent_email}
+          assignments={assignments}
         />
       )}
+    </div>
+  );
+}
+
+/* ── Editable Summary (textarea + Save/Cancel) ── */
+
+function EditableSummary({
+  draft,
+  onChange,
+  onSave,
+  onCancel,
+  saving,
+}: {
+  draft: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.focus();
+      // Auto-resize
+      ref.current.style.height = "auto";
+      ref.current.style.height = ref.current.scrollHeight + "px";
+    }
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <textarea
+        ref={ref}
+        value={draft}
+        onChange={(e) => {
+          onChange(e.target.value);
+          // Auto-resize
+          e.target.style.height = "auto";
+          e.target.style.height = e.target.scrollHeight + "px";
+        }}
+        onKeyDown={handleKeyDown}
+        className="w-full resize-none rounded-[var(--radius-button)] border border-sand bg-cream px-3.5 py-2.5 text-sm leading-[1.75] text-charcoal focus:outline-none focus:ring-2 focus:ring-amber/40"
+        rows={6}
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={onSave}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] bg-charcoal px-3.5 py-1.5 text-xs font-semibold text-white transition-shadow hover:shadow-card-hover disabled:opacity-50"
+        >
+          {saving && <Loader2 size={12} className="animate-spin" />}
+          Save
+        </button>
+        <button
+          onClick={onCancel}
+          className="rounded-[var(--radius-button)] border border-sand px-3.5 py-1.5 text-xs font-semibold text-stone transition-colors hover:text-charcoal"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -537,10 +743,7 @@ function PageSkeleton() {
           <div className="h-4 w-36 rounded bg-sand" />
           <AssignmentCardSkeleton />
           <AssignmentCardSkeleton />
-          <div className="space-y-2.5">
-            <div className="h-11 w-full rounded-[var(--radius-button)] bg-sand" />
-            <div className="h-11 w-full rounded-[var(--radius-button)] bg-sand" />
-          </div>
+          <div className="h-11 w-full rounded-[var(--radius-button)] bg-sand" />
         </div>
       </div>
     </div>
