@@ -120,7 +120,7 @@ export default function DashboardPage() {
         <div className="space-y-6">
           {/* Quick Stats */}
           <FadeIn delay={50}>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
               {loading ? (
                 <>
                   <QuickStatSkeleton />

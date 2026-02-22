@@ -10,15 +10,15 @@ interface QuickStatCardProps {
 
 export default function QuickStatCard({ icon, value, label }: QuickStatCardProps) {
   return (
-    <div className="flex items-center gap-3 rounded-[var(--radius-card)] bg-warm-white p-4 shadow-card">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-button)] bg-amber-glow text-amber">
+    <div className="flex items-center gap-2 rounded-[var(--radius-card)] bg-warm-white p-3 shadow-card sm:gap-3 sm:p-4">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-button)] bg-amber-glow text-amber sm:h-10 sm:w-10">
         {icon}
       </div>
-      <div>
-        <p className="font-serif text-2xl font-semibold leading-tight text-charcoal">
+      <div className="min-w-0">
+        <p className="truncate font-serif text-xl font-semibold leading-tight text-charcoal sm:text-2xl">
           {value}
         </p>
-        <p className="text-xs font-medium text-stone">{label}</p>
+        <p className="truncate text-[11px] font-medium text-stone sm:text-xs">{label}</p>
       </div>
     </div>
   );

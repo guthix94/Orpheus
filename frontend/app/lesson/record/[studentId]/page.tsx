@@ -226,9 +226,9 @@ export default function ActiveRecordingPage() {
 
         {/* Stop button */}
         <FadeIn delay={150}>
-          <div className="relative mt-10">
+          <div className="relative mt-10 flex h-[140px] w-[140px] items-center justify-center">
             {/* Pulsing ring */}
-            <div className="absolute inset-0 m-auto h-[140px] w-[140px] rounded-full border-2 border-record-red/30 animate-[pulse-ring_2s_ease-in-out_infinite]" />
+            <div className="absolute inset-0 rounded-full border-2 border-record-red/30 animate-[pulse-ring_2s_ease-in-out_infinite]" />
 
             {/* Button */}
             <button

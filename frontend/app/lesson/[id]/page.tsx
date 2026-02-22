@@ -133,8 +133,8 @@ export default function LessonSummaryPage() {
         body: JSON.stringify({}),
       });
       setLesson(updated);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      /* silently fail — user sees no change */
     } finally {
       setConfirming(false);
     }
@@ -151,8 +151,8 @@ export default function LessonSummaryPage() {
       });
       setLesson(updated);
       setAmendmentText("");
-    } catch (err) {
-      console.error(err);
+    } catch {
+      /* silently fail */
     } finally {
       setSavingAmendment(false);
     }
@@ -463,8 +463,10 @@ function SummaryToggle({
   onChange: (t: SummaryTab) => void;
 }) {
   return (
-    <div className="inline-flex rounded-[var(--radius-chip)] bg-ivory p-1">
+    <div className="inline-flex rounded-[var(--radius-chip)] bg-ivory p-1" role="tablist">
       <button
+        role="tab"
+        aria-selected={active === "teacher"}
         onClick={() => onChange("teacher")}
         className={`rounded-[var(--radius-chip)] px-4 py-1.5 text-xs font-semibold transition-all duration-[var(--transition-fast)] ${
           active === "teacher"
@@ -475,6 +477,8 @@ function SummaryToggle({
         Teacher Notes
       </button>
       <button
+        role="tab"
+        aria-selected={active === "parent"}
         onClick={() => onChange("parent")}
         className={`rounded-[var(--radius-chip)] px-4 py-1.5 text-xs font-semibold transition-all duration-[var(--transition-fast)] ${
           active === "parent"
