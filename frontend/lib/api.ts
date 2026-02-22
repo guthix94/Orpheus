@@ -14,3 +14,21 @@ export async function api<T>(
   }
   return res.json() as Promise<T>;
 }
+
+export async function uploadFile<T>(
+  path: string,
+  file: Blob,
+  filename: string,
+): Promise<T> {
+  const form = new FormData();
+  form.append("file", file, filename);
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
