@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Home, Mic, Users, Settings } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Home, Mic, Users, Settings, LogOut } from "lucide-react";
+import { createClient } from "@/lib/supabase";
 
 interface NavItem {
   href: string;
@@ -19,6 +20,13 @@ const navItems: NavItem[] = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard" || pathname === "/";
@@ -67,8 +75,15 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-6 py-4 border-t border-graphite">
-        <p className="text-xs text-stone">v0.1.0 MVP</p>
+      <div className="px-3 py-4 border-t border-graphite space-y-2">
+        <button
+          onClick={handleSignOut}
+          className="flex w-full items-center gap-3 px-3 py-2.5 rounded-[var(--radius-button)] text-sm font-medium text-stone hover:text-white hover:bg-graphite transition-colors duration-[var(--transition-fast)]"
+        >
+          <LogOut size={20} />
+          Sign Out
+        </button>
+        <p className="px-3 text-xs text-stone">v0.1.0 MVP</p>
       </div>
     </aside>
   );

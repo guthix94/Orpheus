@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Dev mode — bypasses auth for local development
     dev_mode: bool = False
 
+    # CORS — comma-separated origins for production
+    cors_origins: str = "http://localhost:3000"
+
     # Email
     sendgrid_api_key: str = ""
 
