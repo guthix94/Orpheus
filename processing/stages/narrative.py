@@ -125,10 +125,9 @@ def generate_summaries(
     raw = message.content[0].text
     logger.info("Received narrative response (%d chars)", len(raw))
 
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.error("Failed to parse Claude response as JSON: %s", raw[:200])
+    data = _parse_json_response(raw)
+    if data is None:
+        logger.error("Failed to parse Claude response as JSON: %s", raw[:300])
         return NarrativeResult(
             teacher_summary=raw,
             parent_summary=raw,
@@ -141,3 +140,40 @@ def generate_summaries(
         suggested_assignments=data.get("suggested_assignments", []),
         pieces_detected=data.get("pieces_detected", []),
     )
+
+
+def _parse_json_response(raw: str) -> dict | None:
+    """Parse a JSON response that may be wrapped in markdown code fences.
+
+    Handles these formats:
+      - Plain JSON: {"teacher_summary": "..."}
+      - Fenced:     ```json\n{"teacher_summary": "..."}\n```
+      - Fenced:     ```\n{"teacher_summary": "..."}\n```
+    """
+    import re
+
+    text = raw.strip()
+
+    # Strip markdown code fences if present
+    fence_match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", text, re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1).strip()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: find the first { ... } block in the response
+    brace_match = re.search(r"\{.*\}", text, re.DOTALL)
+    if brace_match:
+        try:
+            parsed = json.loads(brace_match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    return None
