@@ -29,10 +29,16 @@ the transcript. Focus on what was covered, measurable progress, and areas
 needing attention. Suggest 2-3 specific practice assignments based on what the
 teacher discussed.
 
-PARENT SUMMARY: Warm, encouraging, non-technical. Focus on effort and progress.
-Give one specific thing the parent can encourage at home. Include recommended
-daily practice duration.
+PARENT SUMMARY: Write this as the teacher speaking directly to the parent about
+their child. Use the student's name in third person ("Sofia had a great lesson
+today" NOT "Great job, Sofia!"). The tone should be warm, encouraging, and
+professional — like a teacher's note sent home. Structure:
+1. Open with something genuinely positive about today's lesson
+2. Briefly describe what was worked on (in non-technical language)
+3. Give one or two specific things the parent can encourage at home
+4. End with recommended daily practice duration
 
+NEVER address the student directly — this message goes to the parent.
 NEVER use these words in the parent summary: struggled, failed, couldn't, wrong,
 mistake, problem, weak, poor, bad, behind.
 
