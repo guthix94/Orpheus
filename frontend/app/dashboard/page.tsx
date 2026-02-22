@@ -1,3 +1,5 @@
-export default function DashboardPage() {
-  return <div>Teacher Dashboard</div>;
+import { redirect } from "next/navigation";
+
+export default function DashboardRedirect() {
+  redirect("/");
 }
