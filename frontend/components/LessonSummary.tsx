@@ -1,12 +1,63 @@
 "use client";
 
+interface Assignment {
+  description: string;
+  details?: string;
+}
+
 interface LessonSummaryProps {
   status: string;
   teacherSummary: string | null;
   parentSummary: string | null;
   piecesDetected: string[] | null;
+  suggestedAssignments: Assignment[] | null;
   durationSeconds: number | null;
   startedAt: string;
+}
+
+/**
+ * If the value looks like a JSON string containing a summary object,
+ * try to extract the plain-text field from it. This handles the case
+ * where the raw Claude JSON response ends up stored as-is.
+ */
+function extractText(
+  raw: string | null,
+  field: string,
+): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return raw;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "object" && parsed !== null && typeof parsed[field] === "string") {
+      return parsed[field];
+    }
+  } catch {
+    // Not JSON — return as-is
+  }
+  return raw;
+}
+
+/**
+ * Try to extract a typed array from a value that might be a JSON string.
+ */
+function extractArray<T>(raw: T[] | string | null, field: string): T[] | null {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+      if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed[field])) {
+        return parsed[field];
+      }
+    } catch {
+      // Not JSON
+    }
+  }
+  return null;
 }
 
 export default function LessonSummary({
@@ -14,6 +65,7 @@ export default function LessonSummary({
   teacherSummary,
   parentSummary,
   piecesDetected,
+  suggestedAssignments,
   durationSeconds,
   startedAt,
 }: LessonSummaryProps) {
@@ -29,6 +81,14 @@ export default function LessonSummary({
     month: "long",
     day: "numeric",
   });
+
+  const teacher = extractText(teacherSummary, "teacher_summary");
+  const parent = extractText(parentSummary, "parent_summary");
+  const pieces = extractArray<string>(piecesDetected as string[] | null, "pieces_detected");
+  const assignments = extractArray<Assignment>(
+    suggestedAssignments as Assignment[] | null,
+    "suggested_assignments",
+  );
 
   return (
     <div className="space-y-6">
@@ -60,11 +120,11 @@ export default function LessonSummary({
       </div>
 
       {/* Pieces detected */}
-      {piecesDetected && piecesDetected.length > 0 && (
+      {pieces && pieces.length > 0 && (
         <div>
           <h3 className="text-sm font-medium text-gray-500">Pieces Detected</h3>
           <div className="mt-1 flex flex-wrap gap-2">
-            {piecesDetected.map((piece) => (
+            {pieces.map((piece) => (
               <span
                 key={piece}
                 className="rounded-md bg-indigo-50 px-2 py-1 text-sm text-indigo-700"
@@ -79,9 +139,9 @@ export default function LessonSummary({
       {/* Teacher summary */}
       <div>
         <h3 className="text-sm font-medium text-gray-500">Teacher Summary</h3>
-        {teacherSummary ? (
+        {teacher ? (
           <p className="mt-1 whitespace-pre-wrap text-gray-800">
-            {teacherSummary}
+            {teacher}
           </p>
         ) : (
           <div className="mt-2 space-y-2">
@@ -100,9 +160,9 @@ export default function LessonSummary({
       {/* Parent summary */}
       <div>
         <h3 className="text-sm font-medium text-gray-500">Parent Summary</h3>
-        {parentSummary ? (
+        {parent ? (
           <p className="mt-1 whitespace-pre-wrap text-gray-800">
-            {parentSummary}
+            {parent}
           </p>
         ) : (
           <p className="mt-1 text-sm text-gray-400">
@@ -110,6 +170,28 @@ export default function LessonSummary({
           </p>
         )}
       </div>
+
+      {/* Suggested assignments */}
+      {assignments && assignments.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-gray-500">
+            Suggested Assignments
+          </h3>
+          <ul className="mt-2 space-y-3">
+            {assignments.map((a, i) => (
+              <li
+                key={i}
+                className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3"
+              >
+                <p className="font-medium text-gray-800">{a.description}</p>
+                {a.details && (
+                  <p className="mt-1 text-sm text-gray-500">{a.details}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
