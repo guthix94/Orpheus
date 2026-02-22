@@ -26,14 +26,14 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="hidden md:flex fixed left-0 top-0 bottom-0 w-[var(--spacing-sidebar)] flex-col bg-charcoal-900 text-white z-40">
+    <aside className="hidden md:flex fixed left-0 top-0 bottom-0 w-[var(--spacing-sidebar)] flex-col bg-charcoal text-white z-40">
       {/* Logo */}
       <div className="px-6 py-6">
         <Link href="/dashboard" className="block">
           <h1 className="font-serif text-xl font-bold text-white tracking-tight">
             Orpheus
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">Lesson Intelligence</p>
+          <p className="text-xs text-stone mt-0.5">Lesson Intelligence</p>
         </Link>
       </div>
 
@@ -52,12 +52,12 @@ export default function Sidebar() {
                     transition-colors duration-[var(--transition-fast)]
                     ${
                       active
-                        ? "bg-amber-500/15 text-amber-400"
-                        : "text-slate-400 hover:text-white hover:bg-charcoal-700"
+                        ? "bg-amber-glow text-amber-light"
+                        : "text-stone hover:text-white hover:bg-graphite"
                     }
                   `}
                 >
-                  <Icon size={20} className={active ? "text-amber-400" : ""} />
+                  <Icon size={20} className={active ? "text-amber-light" : ""} />
                   {item.label}
                 </Link>
               </li>
@@ -67,8 +67,8 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-6 py-4 border-t border-charcoal-700">
-        <p className="text-xs text-slate-500">v0.1.0 MVP</p>
+      <div className="px-6 py-4 border-t border-graphite">
+        <p className="text-xs text-stone">v0.1.0 MVP</p>
       </div>
     </aside>
   );

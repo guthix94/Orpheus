@@ -1,57 +1,47 @@
 @import "tailwindcss";
 
 /* ─── Google Fonts ─── */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:wght@400;500;600;700&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
 
 /* ─── Orpheus "Concert Hall Warmth" Theme (Tailwind v4) ─── */
 @theme {
-  /* ── Color Palette ── */
+  /* ── Color Palette (exact spec) ── */
 
-  /* Charcoal — dark backgrounds, sidebar, nav */
-  --color-charcoal-900: #1a1a2e;
-  --color-charcoal-800: #22223a;
-  --color-charcoal-700: #2d2d44;
-  --color-charcoal-600: #3a3a52;
+  /* Backgrounds */
+  --color-cream: #FBF8F3;
+  --color-warm-white: #FEFCF9;
+  --color-ivory: #F5F0E8;
+  --color-sand: #E8DFD0;
 
-  /* Ivory — light backgrounds, content areas */
-  --color-ivory-50: #fefdfb;
-  --color-ivory-100: #faf8f4;
-  --color-ivory-200: #f3f0e8;
-  --color-ivory-300: #e8e4d9;
+  /* Primary accent */
+  --color-amber: #C8956C;
+  --color-amber-light: #D4A97A;
+  --color-amber-glow: rgba(200, 149, 108, 0.12);
 
-  /* Amber/Gold — primary accent, CTAs, active states */
-  --color-amber-500: #d4a017;
-  --color-amber-400: #e3b341;
-  --color-amber-300: #f0cc6b;
-  --color-amber-600: #b8860b;
+  /* Dark tones */
+  --color-charcoal: #2C2C2C;
+  --color-graphite: #3D3D3D;
 
-  /* Warm Coral — recording, destructive, alerts */
-  --color-coral-500: #e05252;
-  --color-coral-400: #e87171;
-  --color-coral-600: #c73e3e;
+  /* Neutral text */
+  --color-slate: #6B6B6B;
+  --color-stone: #8E8E8E;
+  --color-mist: #B5B0A8;
 
-  /* Sage — success, positive indicators */
-  --color-sage-500: #6b9a7b;
-  --color-sage-400: #89b396;
-  --color-sage-600: #4f7d5f;
+  /* Recording */
+  --color-record-red: #DC3545;
+  --color-record-red-glow: rgba(220, 53, 69, 0.25);
 
-  /* Slate — body text, secondary text */
-  --color-slate-900: #1e293b;
-  --color-slate-700: #334155;
-  --color-slate-500: #64748b;
-  --color-slate-400: #94a3b8;
-  --color-slate-300: #cbd5e1;
-  --color-slate-200: #e2e8f0;
-  --color-slate-100: #f1f5f9;
-
-  /* Indigo — links, secondary accent */
-  --color-indigo-500: #6366f1;
-  --color-indigo-400: #818cf8;
-  --color-indigo-600: #4f46e5;
+  /* Status */
+  --color-success: #5C8A5E;
+  --color-success-bg: #EDF5ED;
+  --color-warning: #C49A3C;
+  --color-warning-bg: #FBF5E8;
+  --color-error: #B85C5C;
+  --color-error-bg: #FAEDED;
 
   /* ── Typography ── */
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Lora", ui-serif, Georgia, serif;
+  --font-serif: "Cormorant Garamond", ui-serif, Georgia, serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
 
   /* ── Spacing & Layout ── */
   --spacing-sidebar: 240px;
@@ -103,17 +93,17 @@ html {
 
 body {
   font-family: var(--font-sans);
-  background-color: var(--color-ivory-100);
-  color: var(--color-slate-900);
+  background-color: var(--color-cream);
+  color: var(--color-charcoal);
   line-height: 1.6;
 }
 
-/* Headings use serif font for warmth */
+/* Headings use Cormorant Garamond for concert-hall warmth */
 h1, h2, h3 {
   font-family: var(--font-serif);
   font-weight: 600;
   line-height: 1.3;
-  color: var(--color-charcoal-900);
+  color: var(--color-charcoal);
 }
 
 /* ─── Scrollbar styling ─── */
@@ -126,22 +116,22 @@ h1, h2, h3 {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-slate-300);
+  background: var(--color-mist);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-slate-400);
+  background: var(--color-stone);
 }
 
 /* ─── Focus ring utility ─── */
 *:focus-visible {
-  outline: 2px solid var(--color-amber-400);
+  outline: 2px solid var(--color-amber);
   outline-offset: 2px;
 }
 
 /* ─── Selection ─── */
 ::selection {
-  background: var(--color-amber-300);
-  color: var(--color-charcoal-900);
+  background: var(--color-amber-light);
+  color: var(--color-charcoal);
 }

@@ -9,7 +9,7 @@ interface AppShellProps {
 
 export default function AppShell({ children }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-ivory-100">
+    <div className="min-h-screen bg-cream">
       {/* Desktop sidebar */}
       <Sidebar />
 
