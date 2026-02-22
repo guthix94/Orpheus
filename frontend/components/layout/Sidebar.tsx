@@ -33,7 +33,7 @@ export default function Sidebar() {
           <h1 className="font-serif text-xl font-bold text-white tracking-tight">
             Orpheus
           </h1>
-          <p className="text-xs text-stone mt-0.5">Lesson Intelligence</p>
+          <p className="text-xs text-stone mt-0.5">Orpheus</p>
         </Link>
       </div>
 
