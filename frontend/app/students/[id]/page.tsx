@@ -237,7 +237,7 @@ export default function StudentProfilePage() {
               {/* Actions */}
               <div className="mt-5 space-y-2.5">
                 <Link
-                  href={`/lesson/record?student=${id}`}
+                  href={`/lesson/record/${id}`}
                   className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] bg-charcoal px-4 py-2.5 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover"
                 >
                   <Mic size={16} className="text-amber" />
@@ -245,13 +245,13 @@ export default function StudentProfilePage() {
                 </Link>
 
                 {student.parent_email && (
-                  <Link
-                    href={`/lesson/record?student=${id}`}
+                  <a
+                    href={`mailto:${student.parent_email}`}
                     className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] border border-sand bg-cream px-4 py-2.5 text-sm font-semibold text-charcoal transition-shadow hover:shadow-card-hover"
                   >
                     <Mail size={16} className="text-stone" />
                     Message Parent
-                  </Link>
+                  </a>
                 )}
               </div>
             </div>
@@ -299,10 +299,12 @@ function TabBar({
   onChange: (t: Tab) => void;
 }) {
   return (
-    <div className="flex border-b border-sand">
+    <div className="flex border-b border-sand" role="tablist">
       {TABS.map((tab) => (
         <button
           key={tab.key}
+          role="tab"
+          aria-selected={activeTab === tab.key}
           onClick={() => onChange(tab.key)}
           className={`relative px-4 pb-2.5 pt-1 text-xs font-semibold uppercase tracking-widest transition-colors duration-[var(--transition-fast)] ${
             activeTab === tab.key ? "text-charcoal" : "text-stone hover:text-slate"

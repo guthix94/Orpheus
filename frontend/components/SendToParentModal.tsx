@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, Send, X } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -45,6 +45,21 @@ export default function SendToParentModal({
     }
   }, [open]);
 
+  // Close on Escape key
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    },
+    [onClose],
+  );
+
+  useEffect(() => {
+    if (open) {
+      document.addEventListener("keydown", handleKeyDown);
+      return () => document.removeEventListener("keydown", handleKeyDown);
+    }
+  }, [open, handleKeyDown]);
+
   const handleSend = async () => {
     if (!email.trim() || sending) return;
     setSending(true);
@@ -75,14 +90,17 @@ export default function SendToParentModal({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-50 bg-charcoal/40 backdrop-blur-sm"
+        className="fixed inset-0 z-50 bg-charcoal/40 backdrop-blur-sm animate-[fade-in_0.2s_ease-out]"
         onClick={onClose}
       />
 
       {/* Modal — bottom sheet on mobile, centered on desktop */}
       <div className="fixed inset-x-0 bottom-0 z-50 md:inset-0 md:flex md:items-center md:justify-center md:p-6">
         <div
-          className="relative w-full rounded-t-3xl bg-warm-white p-6 shadow-card-hover md:max-w-md md:rounded-[var(--radius-card)]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="send-parent-title"
+          className="relative w-full rounded-t-3xl bg-warm-white p-6 shadow-card-hover animate-[slide-up_0.25s_ease-out] md:max-w-md md:rounded-[var(--radius-card)] md:animate-[fade-in_0.2s_ease-out]"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Handle bar (mobile) */}
@@ -90,11 +108,15 @@ export default function SendToParentModal({
 
           {/* Header */}
           <div className="flex items-center justify-between">
-            <h2 className="font-serif text-xl font-semibold text-charcoal">
+            <h2
+              id="send-parent-title"
+              className="font-serif text-xl font-semibold text-charcoal"
+            >
               Send to Parent
             </h2>
             <button
               onClick={onClose}
+              aria-label="Close"
               className="rounded-full p-1.5 text-stone hover:bg-ivory hover:text-charcoal transition-colors"
             >
               <X size={18} />

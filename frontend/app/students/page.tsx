@@ -106,7 +106,8 @@ export default function StudentsPage() {
           {query && (
             <button
               onClick={() => setQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-stone hover:text-charcoal transition-colors"
+              aria-label="Clear search"
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-stone hover:text-charcoal transition-colors"
             >
               <X size={16} />
             </button>
