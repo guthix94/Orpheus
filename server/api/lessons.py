@@ -1,16 +1,20 @@
 """API route handlers for lesson start/stop, summary, confirm/amend."""
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth import AuthenticatedUser, get_current_user
+from server.config import settings
 from server.database import get_db
 from server.models.lesson import Lesson
 from server.schemas.lesson import LessonResponse, LessonStart, LessonStop
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lessons", tags=["lessons"])
 
@@ -38,6 +42,7 @@ async def start_lesson(
 async def stop_lesson(
     lesson_id: uuid.UUID,
     body: LessonStop,
+    background_tasks: BackgroundTasks,
     user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Lesson:
@@ -64,6 +69,15 @@ async def stop_lesson(
 
     await db.commit()
     await db.refresh(lesson)
+
+    # Kick off the processing pipeline in a background thread.
+    # The pipeline opens its own synchronous DB session so it doesn't
+    # interfere with the async request lifecycle.
+    from processing.pipeline import run_pipeline
+
+    logger.info("Scheduling processing pipeline for lesson %s", lesson.id)
+    background_tasks.add_task(run_pipeline, lesson.id, settings.database_url)
+
     return lesson
 
 

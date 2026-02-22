@@ -23,6 +23,7 @@ class LessonResponse(BaseModel):
     started_at: datetime
     ended_at: datetime | None = None
     duration_seconds: int | None = None
+    audio_file_path: str | None = None
     status: str
     summary_style: str
     pieces_detected: list[str] | None = None
@@ -30,6 +31,8 @@ class LessonResponse(BaseModel):
     teacher_summary_formal: str | None = None
     parent_summary: str | None = None
     suggested_assignments: list[dict[str, Any]] | None = None
+    processing_metadata: dict[str, Any] | None = None
+    timeline_json: dict[str, Any] | None = None
     confirmed_at: datetime | None = None
     is_locked: bool = False
 
