@@ -1,10 +1,17 @@
 """Orpheus API server entry point."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 from server.api.assignments import router as assignments_router
 from server.api.lessons import router as lessons_router
