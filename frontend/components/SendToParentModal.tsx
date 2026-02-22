@@ -11,6 +11,20 @@ interface SendToParentModalProps {
   studentId: string;
   parentSummary: string;
   parentEmail: string | null;
+  assignments?: { description: string; details?: string | null }[];
+}
+
+function formatAssignments(
+  assignments: { description: string; details?: string | null }[],
+): string {
+  if (assignments.length === 0) return "";
+  let text = "\n\nPractice Assignments:\n";
+  assignments.forEach((a, i) => {
+    text += `${i + 1}. ${a.description}`;
+    if (a.details) text += ` — ${a.details}`;
+    text += "\n";
+  });
+  return text;
 }
 
 export default function SendToParentModal({
@@ -20,20 +34,46 @@ export default function SendToParentModal({
   studentId,
   parentSummary,
   parentEmail,
+  assignments = [],
 }: SendToParentModalProps) {
   const [email, setEmail] = useState(parentEmail ?? "");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeAssignments, setIncludeAssignments] = useState(true);
+  const [messageBody, setMessageBody] = useState("");
 
-  // Reset state when modal opens
+  // Build initial message when modal opens
   useEffect(() => {
     if (open) {
       setEmail(parentEmail ?? "");
       setSent(false);
       setError(null);
+      setIncludeAssignments(true);
+      setMessageBody(
+        parentSummary + (assignments.length > 0 ? formatAssignments(assignments) : ""),
+      );
     }
-  }, [open, parentEmail]);
+  }, [open, parentEmail, parentSummary, assignments]);
+
+  // Toggle assignments on/off
+  useEffect(() => {
+    if (!open) return;
+    const assignmentBlock = formatAssignments(assignments);
+    if (includeAssignments && assignments.length > 0) {
+      // Only append if not already present
+      if (!messageBody.includes("Practice Assignments:")) {
+        setMessageBody((prev) => prev + assignmentBlock);
+      }
+    } else {
+      // Strip the assignments block
+      const idx = messageBody.indexOf("\n\nPractice Assignments:\n");
+      if (idx !== -1) {
+        setMessageBody(messageBody.slice(0, idx));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includeAssignments]);
 
   // Lock body scroll when open
   useEffect(() => {
@@ -70,7 +110,7 @@ export default function SendToParentModal({
         body: JSON.stringify({
           lesson_id: lessonId,
           student_id: studentId,
-          message_body: parentSummary,
+          message_body: messageBody,
           message_type: "lesson_summary",
           channel: "email",
           recipient: email.trim(),
@@ -94,7 +134,7 @@ export default function SendToParentModal({
         onClick={onClose}
       />
 
-      {/* Modal — bottom sheet on mobile, centered on desktop */}
+      {/* Modal */}
       <div className="fixed inset-x-0 bottom-0 z-50 md:inset-0 md:flex md:items-center md:justify-center md:p-6">
         <div
           role="dialog"
@@ -159,15 +199,41 @@ export default function SendToParentModal({
                 />
               </div>
 
-              {/* Message preview */}
+              {/* Editable message */}
               <div>
                 <label className="mb-1.5 block text-xs font-medium uppercase tracking-widest text-stone">
-                  Message preview
+                  Message
                 </label>
-                <div className="max-h-48 overflow-y-auto rounded-[var(--radius-button)] bg-cream p-4 text-sm leading-relaxed text-slate">
-                  {parentSummary}
-                </div>
+                <textarea
+                  value={messageBody}
+                  onChange={(e) => setMessageBody(e.target.value)}
+                  rows={8}
+                  className="w-full resize-none rounded-[var(--radius-button)] border border-sand bg-cream px-3.5 py-2.5 text-sm leading-relaxed text-charcoal placeholder:text-mist focus:outline-none focus:ring-2 focus:ring-amber/40"
+                />
               </div>
+
+              {/* Include assignments toggle */}
+              {assignments.length > 0 && (
+                <label className="flex cursor-pointer items-center gap-2.5">
+                  <button
+                    role="switch"
+                    aria-checked={includeAssignments}
+                    onClick={() => setIncludeAssignments((v) => !v)}
+                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                      includeAssignments ? "bg-success" : "bg-sand"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-card transition-transform ${
+                        includeAssignments ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                  <span className="text-xs font-medium text-charcoal">
+                    Include practice assignments
+                  </span>
+                </label>
+              )}
 
               {/* Error */}
               {error && (
