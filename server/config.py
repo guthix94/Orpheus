@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     # Supabase Auth
     supabase_url: str = "https://xxxx.supabase.co"
+    supabase_anon_key: str = ""
+    supabase_service_role_key: str = ""
     supabase_jwt_secret: str = "your-supabase-jwt-secret"
 
     # Task queue
@@ -26,6 +28,9 @@ class Settings(BaseSettings):
     # File storage
     audio_storage_path: str = "./storage/audio"
     scores_path: str = "./scores/data"
+
+    # Dev mode — bypasses auth for local development
+    dev_mode: bool = False
 
     # Email
     sendgrid_api_key: str = ""
