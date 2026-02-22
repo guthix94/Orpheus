@@ -5,7 +5,9 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,13 +39,35 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_CORS_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+_CORS_HEADERS = "Content-Type, Authorization"
+
+
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    """Reflect the request Origin back so credentialed requests work from any domain."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        origin = request.headers.get("origin", "")
+
+        # Preflight — return immediately with CORS headers
+        if request.method == "OPTIONS":
+            resp = Response(status_code=200)
+            resp.headers["Access-Control-Allow-Origin"] = origin or "*"
+            resp.headers["Access-Control-Allow-Credentials"] = "true"
+            resp.headers["Access-Control-Allow-Methods"] = _CORS_METHODS
+            resp.headers["Access-Control-Allow-Headers"] = _CORS_HEADERS
+            resp.headers["Access-Control-Max-Age"] = "600"
+            return resp
+
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = origin or "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = _CORS_METHODS
+        response.headers["Access-Control-Allow-Headers"] = _CORS_HEADERS
+        return response
+
+
+app.add_middleware(DynamicCORSMiddleware)
 
 
 app.include_router(students_router, prefix="/api")
