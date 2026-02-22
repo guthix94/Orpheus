@@ -46,8 +46,8 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
     from server.models.lesson import Lesson
     from server.models.student import Student
 
-    # Convert async URL to sync driver
-    sync_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
+    # Convert async URL to sync driver (psycopg2)
+    sync_url = database_url.replace("+asyncpg", "")
     engine = create_engine(sync_url, echo=False)
     SessionLocal = sessionmaker(bind=engine)
 
