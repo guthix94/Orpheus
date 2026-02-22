@@ -28,8 +28,8 @@ dependencies = [
     "torchaudio>=2.1.0",
     "demucs>=4.0.1",
 
-    # Speech-to-text
-    "openai-whisper>=20231117",
+    # Speech-to-text (Groq-hosted Whisper)
+    "groq>=0.4.0",
 
     # Music score parsing
     "music21>=9.1.0",

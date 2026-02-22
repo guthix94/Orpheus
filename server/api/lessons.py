@@ -4,7 +4,9 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +44,6 @@ async def start_lesson(
 async def stop_lesson(
     lesson_id: uuid.UUID,
     body: LessonStop,
-    background_tasks: BackgroundTasks,
     user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Lesson:
@@ -64,15 +65,52 @@ async def stop_lesson(
     now = datetime.now(timezone.utc)
     lesson.ended_at = now
     lesson.duration_seconds = int((now - lesson.started_at).total_seconds())
-    lesson.audio_file_path = body.audio_file_path
     lesson.status = "processing"
 
     await db.commit()
     await db.refresh(lesson)
+    return lesson
 
-    # Kick off the processing pipeline in a background thread.
-    # The pipeline opens its own synchronous DB session so it doesn't
-    # interfere with the async request lifecycle.
+
+@router.post("/{lesson_id}/upload-audio", response_model=LessonResponse)
+async def upload_audio(
+    lesson_id: uuid.UUID,
+    file: UploadFile,
+    background_tasks: BackgroundTasks,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+    if lesson.status != "processing":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Lesson is '{lesson.status}', expected 'processing'",
+        )
+
+    # Save the uploaded audio to local storage
+    storage_dir = Path(settings.audio_storage_path)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    suffix = Path(file.filename).suffix if file.filename else ".webm"
+    file_path = storage_dir / f"{lesson_id}{suffix}"
+
+    content = await file.read()
+    file_path.write_bytes(content)
+    logger.info("Saved %d bytes of audio to %s", len(content), file_path)
+
+    lesson.audio_file_path = str(file_path)
+    await db.commit()
+    await db.refresh(lesson)
+
+    # Now that the audio file is on disk, kick off the processing pipeline.
     from processing.pipeline import run_pipeline
 
     logger.info("Scheduling processing pipeline for lesson %s", lesson.id)

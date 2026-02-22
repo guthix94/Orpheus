@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AudioRecorder from "@/components/AudioRecorder";
-import { api } from "@/lib/api";
+import { api, uploadFile } from "@/lib/api";
 
 interface Student {
   id: string;
@@ -67,15 +67,19 @@ export default function RecordPage() {
       if (!lessonId) return;
       setUploading(true);
 
-      // Stop the lesson
+      // 1. Stop the lesson (sets status to "processing")
       await api(`/api/lessons/${lessonId}/stop`, {
         method: "POST",
-        body: JSON.stringify({ audio_file_path: `audio/${lessonId}.webm` }),
+        body: JSON.stringify({}),
       });
 
-      // TODO: upload blob to Supabase Storage once bucket is configured
-      // For now we just stop the lesson and redirect
-      void blob;
+      // 2. Upload the audio blob — this saves the file on the server
+      //    and triggers the processing pipeline
+      await uploadFile(
+        `/api/lessons/${lessonId}/upload-audio`,
+        blob,
+        `${lessonId}.webm`,
+      );
 
       router.push(`/lesson/${lessonId}`);
     },
