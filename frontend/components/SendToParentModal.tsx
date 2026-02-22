@@ -17,12 +17,12 @@ function formatAssignments(
   assignments: { description: string; details?: string | null }[],
 ): string {
   if (assignments.length === 0) return "";
-  let text = "\n\nPractice Assignments:\n";
-  assignments.forEach((a, i) => {
-    text += `\n${i + 1}. ${a.description}`;
-    if (a.details) text += ` — ${a.details}`;
+  const items = assignments.map((a, i) => {
+    let line = `${i + 1}. ${a.description}`;
+    if (a.details) line += ` — ${a.details}`;
+    return line;
   });
-  return text;
+  return "\n\nPractice Assignments:\n\n" + items.join("\n\n");
 }
 
 export default function SendToParentModal({
