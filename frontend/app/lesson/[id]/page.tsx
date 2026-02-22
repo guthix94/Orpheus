@@ -34,7 +34,7 @@ interface Lesson {
   teacher_summary: string | null;
   parent_summary: string | null;
   suggested_assignments:
-    | { id?: string; description: string; details?: string }[]
+    | { id?: string; description: string; details?: string | null }[]
     | null;
 }
 

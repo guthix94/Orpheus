@@ -17,6 +17,7 @@ from server.api.assignments import router as assignments_router
 from server.api.lessons import router as lessons_router
 from server.api.parents import router as parents_router
 from server.api.students import router as students_router
+from server.config import settings
 from server.database import engine
 
 
@@ -38,7 +39,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

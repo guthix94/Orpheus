@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Home, Mic, Users, Settings } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Home, Mic, Users, LogOut } from "lucide-react";
+import { createClient } from "@/lib/supabase";
 
 interface NavItem {
   href: string;
@@ -14,15 +15,21 @@ const navItems: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: Home },
   { href: "/lesson/record", label: "Record", icon: Mic },
   { href: "/students", label: "Students", icon: Users },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function MobileNav() {
   const pathname = usePathname();
+  const router = useRouter();
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard" || pathname === "/";
     return pathname.startsWith(href);
+  };
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
   };
 
   return (
@@ -50,6 +57,15 @@ export default function MobileNav() {
             </li>
           );
         })}
+        <li className="flex-1">
+          <button
+            onClick={handleSignOut}
+            className="flex w-full flex-col items-center justify-center gap-0.5 py-1.5 text-xs font-medium text-stone transition-colors duration-[var(--transition-fast)]"
+          >
+            <LogOut size={22} />
+            <span>Sign Out</span>
+          </button>
+        </li>
       </ul>
     </nav>
   );
