@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Send, X } from "lucide-react";
-import { api } from "@/lib/api";
+import { Check, Copy, X } from "lucide-react";
 
 interface SendToParentModalProps {
   open: boolean;
@@ -20,9 +19,8 @@ function formatAssignments(
   if (assignments.length === 0) return "";
   let text = "\n\nPractice Assignments:\n";
   assignments.forEach((a, i) => {
-    text += `${i + 1}. ${a.description}`;
+    text += `\n${i + 1}. ${a.description}`;
     if (a.details) text += ` — ${a.details}`;
-    text += "\n";
   });
   return text;
 }
@@ -30,31 +28,23 @@ function formatAssignments(
 export default function SendToParentModal({
   open,
   onClose,
-  lessonId,
-  studentId,
   parentSummary,
-  parentEmail,
   assignments = [],
 }: SendToParentModalProps) {
-  const [email, setEmail] = useState(parentEmail ?? "");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [includeAssignments, setIncludeAssignments] = useState(true);
   const [messageBody, setMessageBody] = useState("");
 
   // Build initial message when modal opens
   useEffect(() => {
     if (open) {
-      setEmail(parentEmail ?? "");
-      setSent(false);
-      setError(null);
+      setCopied(false);
       setIncludeAssignments(true);
       setMessageBody(
         parentSummary + (assignments.length > 0 ? formatAssignments(assignments) : ""),
       );
     }
-  }, [open, parentEmail, parentSummary, assignments]);
+  }, [open, parentSummary, assignments]);
 
   // Toggle assignments on/off
   useEffect(() => {
@@ -100,27 +90,13 @@ export default function SendToParentModal({
     }
   }, [open, handleKeyDown]);
 
-  const handleSend = async () => {
-    if (!email.trim() || sending) return;
-    setSending(true);
-    setError(null);
+  const handleCopy = async () => {
     try {
-      await api("/api/parents/messages", {
-        method: "POST",
-        body: JSON.stringify({
-          lesson_id: lessonId,
-          student_id: studentId,
-          message_body: messageBody,
-          message_type: "lesson_summary",
-          channel: "email",
-          recipient: email.trim(),
-        }),
-      });
-      setSent(true);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setSending(false);
+      await navigator.clipboard.writeText(messageBody);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback: select text in the textarea
     }
   };
 
@@ -152,7 +128,7 @@ export default function SendToParentModal({
               id="send-parent-title"
               className="font-serif text-xl font-semibold text-charcoal"
             >
-              Send to Parent
+              Parent Message
             </h2>
             <button
               onClick={onClose}
@@ -163,96 +139,61 @@ export default function SendToParentModal({
             </button>
           </div>
 
-          {sent ? (
-            /* ── Success State ── */
-            <div className="mt-8 flex flex-col items-center py-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-success-bg">
-                <Check size={24} className="text-success" strokeWidth={3} />
-              </div>
-              <p className="mt-4 font-serif text-lg font-semibold text-charcoal">
-                Sent to {email}!
-              </p>
-              <p className="mt-1 text-sm text-stone">
-                The parent will receive an email shortly.
-              </p>
-              <button
-                onClick={onClose}
-                className="mt-6 w-full rounded-[var(--radius-button)] bg-charcoal px-5 py-2.5 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover"
-              >
-                Done
-              </button>
+          <div className="mt-5 space-y-4">
+            {/* Editable message */}
+            <div>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-widest text-stone">
+                Message
+              </label>
+              <textarea
+                value={messageBody}
+                onChange={(e) => setMessageBody(e.target.value)}
+                rows={8}
+                className="w-full resize-none rounded-[var(--radius-button)] border border-sand bg-cream px-3.5 py-2.5 text-sm leading-relaxed text-charcoal placeholder:text-mist focus:outline-none focus:ring-2 focus:ring-amber/40"
+              />
             </div>
-          ) : (
-            /* ── Send Form ── */
-            <div className="mt-5 space-y-4">
-              {/* Email input */}
-              <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase tracking-widest text-stone">
-                  Parent email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="parent@email.com"
-                  className="w-full rounded-[var(--radius-button)] border border-sand bg-cream px-3.5 py-2.5 text-sm text-charcoal placeholder:text-mist focus:outline-none focus:ring-2 focus:ring-amber/40"
-                />
-              </div>
 
-              {/* Editable message */}
-              <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase tracking-widest text-stone">
-                  Message
-                </label>
-                <textarea
-                  value={messageBody}
-                  onChange={(e) => setMessageBody(e.target.value)}
-                  rows={8}
-                  className="w-full resize-none rounded-[var(--radius-button)] border border-sand bg-cream px-3.5 py-2.5 text-sm leading-relaxed text-charcoal placeholder:text-mist focus:outline-none focus:ring-2 focus:ring-amber/40"
-                />
-              </div>
-
-              {/* Include assignments toggle */}
-              {assignments.length > 0 && (
-                <label className="flex cursor-pointer items-center gap-2.5">
-                  <button
-                    role="switch"
-                    aria-checked={includeAssignments}
-                    onClick={() => setIncludeAssignments((v) => !v)}
-                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                      includeAssignments ? "bg-success" : "bg-sand"
+            {/* Include assignments toggle */}
+            {assignments.length > 0 && (
+              <label className="flex cursor-pointer items-center gap-2.5">
+                <button
+                  role="switch"
+                  aria-checked={includeAssignments}
+                  onClick={() => setIncludeAssignments((v) => !v)}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                    includeAssignments ? "bg-success" : "bg-sand"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-card transition-transform ${
+                      includeAssignments ? "translate-x-4" : "translate-x-0"
                     }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-card transition-transform ${
-                        includeAssignments ? "translate-x-4" : "translate-x-0"
-                      }`}
-                    />
-                  </button>
-                  <span className="text-xs font-medium text-charcoal">
-                    Include practice assignments
-                  </span>
-                </label>
-              )}
+                  />
+                </button>
+                <span className="text-xs font-medium text-charcoal">
+                  Include practice assignments
+                </span>
+              </label>
+            )}
 
-              {/* Error */}
-              {error && (
-                <div className="rounded-[var(--radius-button)] bg-error-bg px-3 py-2 text-xs text-error">
-                  {error}
-                </div>
+            {/* Copy button */}
+            <button
+              onClick={handleCopy}
+              className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] bg-charcoal px-5 py-3 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover"
+            >
+              {copied ? (
+                <>
+                  <Check size={15} />
+                  Copied! ✓
+                </>
+              ) : (
+                <>
+                  <Copy size={15} />
+                  Copy Message
+                </>
               )}
-
-              {/* Send button */}
-              <button
-                onClick={handleSend}
-                disabled={!email.trim() || sending}
-                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] bg-charcoal px-5 py-3 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover disabled:opacity-50"
-              >
-                <Send size={15} />
-                {sending ? "Sending..." : "Send Email"}
-              </button>
-            </div>
-          )}
+            </button>
+          </div>
         </div>
       </div>
     </>
