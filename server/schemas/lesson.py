@@ -16,6 +16,23 @@ class LessonStop(BaseModel):
     audio_file_path: str | None = None
 
 
+class LessonUpdate(BaseModel):
+    pieces_detected: list[str] | None = None
+    teacher_summary: str | None = None
+    parent_summary: str | None = None
+    suggested_assignments: list[dict[str, Any]] | None = None
+
+
+class AssignmentCreate(BaseModel):
+    description: str
+    details: str | None = None
+
+
+class AssignmentUpdate(BaseModel):
+    description: str | None = None
+    details: str | None = None
+
+
 class LessonResponse(BaseModel):
     id: uuid.UUID
     student_id: uuid.UUID

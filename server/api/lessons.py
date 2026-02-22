@@ -14,7 +14,14 @@ from server.auth import AuthenticatedUser, get_current_user
 from server.config import settings
 from server.database import get_db
 from server.models.lesson import Lesson
-from server.schemas.lesson import LessonResponse, LessonStart, LessonStop
+from server.schemas.lesson import (
+    AssignmentCreate,
+    AssignmentUpdate,
+    LessonResponse,
+    LessonStart,
+    LessonStop,
+    LessonUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,3 +156,135 @@ async def list_lessons(
     query = query.order_by(Lesson.started_at.desc())
     result = await db.execute(query)
     return list(result.scalars().all())
+
+
+# ── Lesson partial update ──
+
+
+@router.patch("/{lesson_id}", response_model=LessonResponse)
+async def update_lesson(
+    lesson_id: uuid.UUID,
+    body: LessonUpdate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(lesson, field, value)
+
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
+
+
+# ── Lesson assignment CRUD (operates on suggested_assignments JSON column) ──
+
+
+@router.post("/{lesson_id}/assignments", response_model=LessonResponse, status_code=status.HTTP_201_CREATED)
+async def create_lesson_assignment(
+    lesson_id: uuid.UUID,
+    body: AssignmentCreate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+
+    assignments = list(lesson.suggested_assignments or [])
+    new_assignment = {
+        "id": str(uuid.uuid4()),
+        "description": body.description,
+        "details": body.details,
+    }
+    assignments.append(new_assignment)
+    lesson.suggested_assignments = assignments
+
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
+
+
+@router.patch("/{lesson_id}/assignments/{assignment_id}", response_model=LessonResponse)
+async def update_lesson_assignment(
+    lesson_id: uuid.UUID,
+    assignment_id: str,
+    body: AssignmentUpdate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+
+    assignments = list(lesson.suggested_assignments or [])
+    found = False
+    for a in assignments:
+        if a.get("id") == assignment_id:
+            update_data = body.model_dump(exclude_unset=True)
+            for field, value in update_data.items():
+                a[field] = value
+            found = True
+            break
+
+    if not found:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+
+    lesson.suggested_assignments = assignments
+
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
+
+
+@router.delete("/{lesson_id}/assignments/{assignment_id}", response_model=LessonResponse)
+async def delete_lesson_assignment(
+    lesson_id: uuid.UUID,
+    assignment_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+
+    assignments = list(lesson.suggested_assignments or [])
+    original_len = len(assignments)
+    assignments = [a for a in assignments if a.get("id") != assignment_id]
+
+    if len(assignments) == original_len:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+
+    lesson.suggested_assignments = assignments
+
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
