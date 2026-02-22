@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     # Supabase Auth
     supabase_url: str = "https://xxxx.supabase.co"
+    supabase_anon_key: str = ""
+    supabase_service_role_key: str = ""
     supabase_jwt_secret: str = "your-supabase-jwt-secret"
 
     # Task queue
