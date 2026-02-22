@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     audio_storage_path: str = "./storage/audio"
     scores_path: str = "./scores/data"
 
+    # Dev mode — bypasses auth for local development
+    dev_mode: bool = False
+
     # Email
     sendgrid_api_key: str = ""
 
