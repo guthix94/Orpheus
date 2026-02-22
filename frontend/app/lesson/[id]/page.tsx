@@ -17,6 +17,7 @@ interface Lesson {
   pieces_detected: string[] | null;
   teacher_summary: string | null;
   parent_summary: string | null;
+  suggested_assignments: { description: string; details?: string }[] | null;
 }
 
 interface Student {
@@ -105,6 +106,7 @@ export default function LessonSummaryPage() {
           teacherSummary={lesson.teacher_summary}
           parentSummary={lesson.parent_summary}
           piecesDetected={lesson.pieces_detected}
+          suggestedAssignments={lesson.suggested_assignments}
           durationSeconds={lesson.duration_seconds}
           startedAt={lesson.started_at}
         />
