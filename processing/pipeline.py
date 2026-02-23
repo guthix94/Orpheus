@@ -24,6 +24,49 @@ from server.config import settings
 
 logger = logging.getLogger(__name__)
 
+_WHISPER_PROMPT_BASE = (
+    "This is a music lesson. Common terms: Vivaldi, Bach, Mozart, Beethoven, "
+    "Handel, Suzuki, Kreutzer, Wohlfahrt, Schradieck, spiccato, legato, "
+    "staccato, détaché, vibrato, pizzicato, arco, forte, piano, crescendo, "
+    "diminuendo, allegro, andante, adagio, measures, bars, tempo, metronome, "
+    "intonation, position, first position, third position, bow hold, "
+    "string crossing, scales, arpeggios, etude, concerto, sonata."
+)
+
+# Groq Whisper prompt limit is 224 tokens; keep well under that.
+_WHISPER_PROMPT_MAX_CHARS = 800
+
+
+def _format_timestamped_transcript(segments) -> str:
+    """Format transcript segments as a timestamped transcript string.
+
+    Each line looks like ``[M:SS] text`` or ``[MM:SS] text``.
+    """
+    lines: list[str] = []
+    for seg in segments:
+        start = seg.start if hasattr(seg, "start") else seg["start"]
+        text = seg.text if hasattr(seg, "text") else seg["text"]
+        minutes = int(start) // 60
+        seconds = int(start) % 60
+        lines.append(f"[{minutes}:{seconds:02d}] {text}")
+    return "\n".join(lines)
+
+
+def _build_whisper_prompt(student) -> str:
+    """Build a Whisper prompt with domain vocabulary and student context."""
+    parts = [_WHISPER_PROMPT_BASE]
+
+    if student is not None:
+        if student.current_pieces:
+            pieces_str = ", ".join(student.current_pieces)
+            parts.append(f"Pieces being studied: {pieces_str}.")
+        parts.append(f"Student name: {student.name}.")
+
+    prompt = " ".join(parts)
+    if len(prompt) > _WHISPER_PROMPT_MAX_CHARS:
+        prompt = prompt[:_WHISPER_PROMPT_MAX_CHARS].rsplit(" ", 1)[0]
+    return prompt
+
 
 def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
     """Execute the minimal speech-to-summary pipeline for a lesson.
@@ -76,6 +119,9 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             logger.warning("Pipeline: no audio_file_path on lesson %s — skipping transcription",
                            lesson_id)
 
+        # ---- Build Whisper prompt for transcription accuracy ----
+        whisper_prompt = _build_whisper_prompt(student)
+
         # ---- Stage 1: Transcription ----
         transcript_text = ""
         transcript_segments: list[dict] = []
@@ -86,7 +132,11 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
             logger.info("Pipeline[%s]: starting transcription", lesson_id)
             try:
-                result = transcribe(audio_path, api_key=settings.groq_api_key or None)
+                result = transcribe(
+                    audio_path,
+                    api_key=settings.groq_api_key or None,
+                    prompt=whisper_prompt,
+                )
                 transcript_text = result.full_text
                 transcript_segments = [asdict(s) for s in result.segments]
                 transcription_duration = result.duration_seconds
@@ -97,6 +147,49 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             except Exception:
                 logger.exception("Pipeline[%s]: transcription failed", lesson_id)
 
+        # ---- Query previous lesson for context ----
+        previous_lesson_context: str | None = None
+        try:
+            prev_lesson = session.execute(
+                select(Lesson)
+                .where(
+                    Lesson.student_id == lesson.student_id,
+                    Lesson.status == "completed",
+                    Lesson.id != lesson_id,
+                )
+                .order_by(Lesson.started_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if prev_lesson is not None:
+                date_str = prev_lesson.started_at.strftime("%B %d, %Y")
+                assignments_text = "None"
+                if prev_lesson.suggested_assignments:
+                    assignment_lines = []
+                    for a in prev_lesson.suggested_assignments:
+                        desc = a.get("description", "")
+                        details = a.get("details", "")
+                        line = f"- {desc}"
+                        if details:
+                            line += f": {details}"
+                        assignment_lines.append(line)
+                    assignments_text = "\n".join(assignment_lines)
+
+                previous_lesson_context = (
+                    f"Previous lesson ({date_str}):\n"
+                    f"Summary: {prev_lesson.teacher_summary}\n"
+                    f"Assignments given:\n{assignments_text}"
+                )
+                logger.info("Pipeline[%s]: found previous lesson from %s", lesson_id, date_str)
+        except Exception:
+            logger.exception("Pipeline[%s]: failed to query previous lesson", lesson_id)
+
+        # ---- Format timestamped transcript for narrative ----
+        if transcript_segments:
+            timestamped_transcript = _format_timestamped_transcript(transcript_segments)
+        else:
+            timestamped_transcript = transcript_text
+
         # ---- Stage 2: Narrative generation ----
         logger.info("Pipeline[%s]: starting narrative generation", lesson_id)
         narrative_duration = 0.0
@@ -105,11 +198,12 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
             t0 = time.time()
             narrative = generate_summaries(
-                transcript=transcript_text,
+                transcript=timestamped_transcript,
                 student_name=student_name,
                 instrument=instrument,
                 duration_seconds=lesson.duration_seconds,
                 summary_style=lesson.summary_style,
+                previous_lesson_context=previous_lesson_context,
                 api_key=settings.anthropic_api_key or None,
             )
             narrative_duration = time.time() - t0

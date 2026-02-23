@@ -29,7 +29,11 @@ class TranscriptionResult:
     duration_seconds: float = 0.0
 
 
-def transcribe(audio_path: str | Path, api_key: str | None = None) -> TranscriptionResult:
+def transcribe(
+    audio_path: str | Path,
+    api_key: str | None = None,
+    prompt: str | None = None,
+) -> TranscriptionResult:
     """Transcribe *audio_path* using the Groq Whisper API.
 
     Parameters
@@ -39,6 +43,9 @@ def transcribe(audio_path: str | Path, api_key: str | None = None) -> Transcript
     api_key:
         Groq API key.  If *None*, the client reads the ``GROQ_API_KEY``
         environment variable.
+    prompt:
+        Optional prompt to guide Whisper transcription (e.g. domain-specific
+        vocabulary).  Groq's limit is 224 tokens.
     """
     from groq import Groq
 
@@ -51,12 +58,18 @@ def transcribe(audio_path: str | Path, api_key: str | None = None) -> Transcript
     logger.info("Transcribing %s via Groq whisper-large-v3", audio_path)
     t0 = time.time()
 
-    with open(audio_path, "rb") as audio_file:
-        result = client.audio.transcriptions.create(
-            file=(audio_path.name, audio_file),
-            model="whisper-large-v3",
-            response_format="verbose_json",
-        )
+    create_kwargs: dict = dict(
+        file=(audio_path.name, audio_file_handle := open(audio_path, "rb")),
+        model="whisper-large-v3",
+        response_format="verbose_json",
+    )
+    if prompt is not None:
+        create_kwargs["prompt"] = prompt
+
+    try:
+        result = client.audio.transcriptions.create(**create_kwargs)
+    finally:
+        audio_file_handle.close()
 
     elapsed = time.time() - t0
     logger.info("Transcription completed in %.1fs", elapsed)
