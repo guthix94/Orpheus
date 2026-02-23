@@ -2,11 +2,11 @@
 
 ## What This Project Is
 
-**Orpheus** is an intelligent lesson documentation system for music educators. A music teacher taps "record" at the start of a lesson, teaches normally, taps "stop" at the end, and receives an auto-generated structured summary — what pieces were worked on, which sections, at what tempo, how many repetitions, week-over-week progress, plus a parent-friendly message they can send with one tap.
+**Orpheus** is an intelligent lesson documentation system for music educators. A music teacher taps "record" at the start of a lesson, teaches normally, taps "stop" at the end, and receives an auto-generated structured summary — what pieces were worked on, which sections, at what tempo, how many repetitions, week-over-week progress, plus a parent-friendly message they can copy and share.
 
-The system processes a single audio stream containing both teacher speech and student instrument playing. It separates these two streams, transcribes the speech, analyzes the music, aligns the music to a known score, and generates a unified lesson timeline. An LLM then converts this structured data into human-readable summaries.
+The system processes a single audio stream containing both teacher speech and student instrument playing. Currently (Phase 1), it transcribes the speech and generates summaries from the transcript. The full vision separates speech from instrument, analyzes the music, aligns it to a known score, and generates a unified lesson timeline with precise musical data.
 
-This is NOT a generic meeting transcription tool. The core differentiator is that it understands music — it knows which measures the student played, at what tempo, with what intonation, and how that compares to last week.
+This is NOT a generic meeting transcription tool. The core differentiator is that it will understand music — it knows which measures the student played, at what tempo, with what intonation, and how that compares to last week.
 
 **The Codex** is Orpheus's collective knowledge engine — a three-layer knowledge graph built from aggregated lesson data across thousands of teachers. It powers repertoire recommendations, technique dependency mapping, and evidence-based teaching approach suggestions. The Codex is the long-term platform play; Orpheus's lesson documentation is the daily utility that feeds it.
 
@@ -14,14 +14,157 @@ This is NOT a generic meeting transcription tool. The core differentiator is tha
 ```
 Orpheus (the app — daily companion for music teachers)
 ├── Lesson Intelligence — auto-generated summaries, progress tracking
-├── Parent Connect — one-tap parent communications
+├── Parent Connect — copy-to-clipboard parent communications + parent portal
 └── The Codex — collective teaching knowledge (knowledge graph)
     ├── Repertoire Graph — what to teach next
     ├── Technique Map — skill dependencies
     └── Teaching Insights — what approaches work best
 ```
 
-## Architecture Overview
+## Current State (Phase 1 — Live in Production)
+
+### What's Built and Deployed
+
+**The core loop works end-to-end:**
+Teacher opens app → selects/creates student → taps Record → teaches normally → taps Stop → audio uploads → AI processes → summary appears in ~2 minutes.
+
+**Recording & Processing:**
+- Browser-based audio recording (MediaRecorder API, optimized for music — echoCancellation, noiseSuppression, autoGainControl all disabled)
+- Audio saved to Railway local disk at `./storage/audio/{lesson_id}.webm`
+- Speech transcription via Groq (Whisper large-v3) with music vocabulary prompt injection
+- Timestamped transcript segments passed to LLM (not flat text)
+- Previous lesson context passed to LLM for continuity
+- LLM narrative generation (Claude Haiku 4.5) with transcription error correction
+- Produces teacher summary + parent summary + practice assignments
+
+**Lesson Summary Page:**
+- Teacher summary — specific, technical, includes observations
+- Parent summary — warm, encouraging, non-technical, written from teacher to parent perspective ("Sofia had a wonderful lesson today...")
+- Auto-generated practice assignments
+- "Copy Message" button — teacher copies parent message to paste into WhatsApp/Telegram/iMessage
+- Assignment spacing with blank lines between items for readability
+
+**Dashboard:**
+- Studio overview: student count, weekly lessons, total hours
+- Recent lessons list
+- Empty state with "Start Lesson" prompt for new teachers
+
+**Student Management:**
+- Create and view students
+- Student cards with name and lesson history
+- Each student scoped to their teacher (data isolation)
+
+**Auth & Multi-Teacher:**
+- Email/password signup and login via Supabase Auth
+- JWT token validation via JWKS endpoint (ECC/P-256 tokens)
+- Complete data isolation — Teacher A never sees Teacher B's data
+- Sign out from sidebar
+
+### Recent Improvements (Phase 1.5 — Transcription Accuracy)
+
+Four pipeline improvements shipped, all backend-only:
+
+**A1: Whisper Prompt Injection** — Groq Whisper API call now includes a `prompt` parameter with static music vocabulary (composer names, Italian terms, technique words) plus dynamic injection of the student's known `current_pieces` and name. Stays under Groq's 224-token limit.
+
+**A2: LLM Transcription Cleanup** — Claude's system prompt now includes a `TRANSCRIPT CLEANING` section instructing it to correct common speech-to-text errors before generating summaries (e.g., "the voldi" → "Vivaldi", "speak auto" → "spiccato").
+
+**A3: Timestamped Transcript** — LLM now receives timestamped segments (`[M:SS] text`) instead of flat text. Enables Claude to understand lesson pacing and structure ("spent first 10 minutes on scales, then moved to the Vivaldi").
+
+**A4: Previous Lesson Context** — Pipeline queries the most recent completed lesson for the same student and passes its summary and assignments to the LLM. Enables continuity ("assigned last week" / "previously noted area received attention"). Gracefully skips for first lessons. Wrapped in try/except so failures don't break the pipeline.
+
+### What's NOT Built Yet (Future Phases)
+
+- Silero VAD pre-processing (strip music from audio before Whisper) — next up
+- Audio clips (segment lessons, store clips, inline playback)
+- Parent portal (link-based lesson history, no account needed)
+- Source separation (Demucs) — splitting speech from instrument
+- Score alignment (DTW) — measure-level tracking against known scores
+- Pitch/intonation analysis (pYIN)
+- Tempo tracking per section (madmom)
+- Pre-lesson briefs
+- Score database (MusicXML/Suzuki repertoire)
+- Observations UX pattern (see below)
+- Monthly progress reports
+- Email/SMS sending (copy-to-clipboard only for now)
+- Student record export as PDF
+- The Codex (knowledge graph)
+
+## Deployment Architecture
+
+```
+┌──────────────────────────────────────────┐
+│         Frontend (Next.js)               │
+│         Vercel — orpheus-theta.vercel.app │
+└──────────────────┬───────────────────────┘
+                   │ REST API + Bearer token
+┌──────────────────▼───────────────────────┐
+│         Backend (FastAPI)                │
+│         Railway — orpheus-production.up.  │
+│                   railway.app            │
+│                                          │
+│  Auth: JWKS verification (Supabase ECC)  │
+│  CORS: Dynamic origin reflection         │
+│  Processing: Background task in-process  │
+│  Audio: Local disk ./storage/audio/      │
+└──────────────────┬───────────────────────┘
+                   │ postgresql+asyncpg://
+┌──────────────────▼───────────────────────┐
+│         Database & Storage               │
+│         Supabase (Asia-Pacific region)   │
+│                                          │
+│  PostgreSQL via connection pooler        │
+│  (pgbouncer, transaction mode)           │
+│  statement_cache_size=0 required         │
+│                                          │
+│  Supabase Auth (ECC P-256 JWT signing)   │
+│  Supabase Storage (for audio clips —     │
+│    future; not used for raw audio)       │
+└──────────────────────────────────────────┘
+```
+
+### Key Deployment Details
+
+- **Audio is saved to Railway local disk** at `./storage/audio/{lesson_id}.webm` — NOT Supabase Storage. The path is stored on the lesson row as `audio_file_path`.
+- **Database URL must use the Supabase pooler connection** (not direct), and must use `postgresql+asyncpg://` prefix for async SQLAlchemy
+- **`statement_cache_size=0`** is required in SQLAlchemy connect_args because pgbouncer in transaction mode doesn't support prepared statements
+- **Processing pipeline uses a sync engine** (psycopg2-binary) alongside the async engine — it strips `+asyncpg` from the URL automatically
+- **CORS uses dynamic origin reflection** middleware (not a whitelist) because Vercel generates new preview URLs on every deploy
+- **Railway watch paths** are set to `server/**`, `processing/**`, `pyproject.toml` so frontend-only pushes don't trigger 10-minute backend rebuilds
+- **Supabase Site URL** must point to the Vercel production URL (not localhost) for email confirmation redirects
+
+### Environment Variables
+
+**Railway (Backend):**
+```bash
+DATABASE_URL=postgresql+asyncpg://postgres.xxx:password@pooler.supabase.com:6543/postgres
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+ANTHROPIC_API_KEY=sk-ant-...
+GROQ_API_KEY=gsk_...
+DEV_MODE=false
+CORS_ORIGINS=*                    # Dynamic middleware handles this; variable is fallback
+```
+
+**Vercel (Frontend):**
+```bash
+NEXT_PUBLIC_API_URL=https://orpheus-production.up.railway.app
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+```
+
+**Local Development (.env):**
+```bash
+DATABASE_URL=postgresql+asyncpg://orpheus:password@localhost:5432/orpheus
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+ANTHROPIC_API_KEY=sk-ant-...
+GROQ_API_KEY=gsk_...
+DEV_MODE=true                     # Skips JWT auth, uses hardcoded teacher_id
+```
+
+## Architecture Overview (Full Vision)
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -34,11 +177,26 @@ Orpheus (the app — daily companion for music teachers)
 │  Auth, lesson CRUD, student CRUD,            │
 │  trigger processing, serve summaries         │
 └──────────────────┬──────────────────────────┘
-                   │ Task queue
+                   │ Background task (in-process for now)
 ┌──────────────────▼──────────────────────────┐
-│         PROCESSING WORKER (Celery/RQ)        │
+│         PROCESSING PIPELINE                  │
 │                                              │
-│  Pipeline stages (in order):                 │
+│  Current (Phase 1 + 1.5):                    │
+│  1. Speech transcription (Groq/Whisper)      │
+│     - Music vocabulary prompt injection      │
+│     - Timestamped segments output            │
+│  2. Previous lesson context query            │
+│  3. LLM narrative generation (Claude Haiku)  │
+│     - Transcription error correction         │
+│     - Timestamped transcript input           │
+│     - Previous lesson continuity             │
+│                                              │
+│  Next (Phase 1.75 — VAD):                    │
+│  0. Silero VAD pre-processing                │
+│     (strip music before Whisper)             │
+│  1-3. Same as above but with cleaner audio   │
+│                                              │
+│  Future (Phase 2+):                          │
 │  1. Source separation (Demucs)               │
 │  2. Speech transcription (Whisper)           │
 │  3. NLP entity extraction (piece names)      │
@@ -56,53 +214,235 @@ Orpheus (the app — daily companion for music teachers)
                    │
 ┌──────────────────▼──────────────────────────┐
 │              DATA STORES                     │
-│  Supabase PostgreSQL: all structured data    │
-│  Supabase Storage: temp audio, score files   │
-│  Supabase Auth: teacher accounts             │
+│  Supabase PostgreSQL: students, lessons      │
+│  Railway local disk: raw audio (.webm)       │
+│  Supabase Storage: audio clips (future)      │
+│  (Future) Score database: MusicXML files     │
 └─────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
 
-| Layer | Technology | Why |
-|---|---|---|
-| API server | Python 3.11+ / FastAPI | Audio analysis ecosystem is Python-native |
-| Task queue | Celery with Redis (or RQ for simplicity in MVP) | Audio processing takes 3-5 min, must be async |
-| Database | Supabase (hosted PostgreSQL) | Managed DB + auth + file storage in one platform |
-| ORM | SQLAlchemy (connecting to Supabase PostgreSQL) | Complex queries, no vendor lock-in on data layer |
-| Auth | Supabase Auth | Teacher login/signup out of the box |
-| Audio analysis | librosa, madmom | Industry-standard open source, pip installable |
-| Source separation | Demucs (torchaudio / Meta) | Best open-source source separation model |
-| Speech-to-text | OpenAI Whisper (local, openai-whisper package) | Free, self-hosted, 99 languages |
-| Pitch detection | librosa.pyin | Probabilistic YIN, robust and well-tested |
-| Score format | music21 (for MusicXML/MIDI parsing) | Most comprehensive music theory library in Python |
-| LLM | Anthropic Claude API | Narrative generation from structured data |
-| Frontend | Next.js (web app, mobile-responsive) | Fast to build, works on phone browsers |
-| Audio recording | MediaRecorder API (browser) | No native app needed for MVP |
-| File storage | Supabase Storage | Temp audio uploads, score files, process-and-delete |
-| Email | SendGrid API (or SMTP for MVP) | Parent communications |
+| Layer | Technology | Status | Notes |
+|---|---|---|---|
+| Frontend | Next.js on Vercel | ✅ Live | Mobile-responsive, cream/warm design system |
+| API server | Python 3.13 / FastAPI on Railway | ✅ Live | Async with SQLAlchemy |
+| Database | Supabase PostgreSQL (via pooler) | ✅ Live | Asia-Pacific region, pgbouncer transaction mode |
+| Auth | Supabase Auth (ECC P-256 JWT) | ✅ Live | JWKS verification on backend |
+| Audio storage | Railway local disk | ✅ Live | `./storage/audio/{lesson_id}.webm`, no cleanup yet |
+| Speech-to-text | Groq API (whisper-large-v3) | ✅ Live | With music vocabulary prompt injection |
+| LLM | Claude Haiku 4.5 (Anthropic API) | ✅ Live | Narrative generation with timestamps + previous lesson |
+| Audio recording | MediaRecorder API (browser) | ✅ Live | Music-optimized: echo/noise/gain all disabled |
+| VAD | Silero VAD (PyTorch) | 🔜 Next | Strip music before Whisper, no new deps needed |
+| Clip storage | Supabase Storage | 🔜 After VAD | Audio clips for playback + parent sharing |
+| Source separation | Demucs (Meta) | 🔜 Phase 2 | Requires GPU compute |
+| Audio analysis | librosa, madmom | 🔜 Phase 2 | Pitch, chroma, tempo, onset |
+| Score alignment | DTW via librosa | 🔜 Phase 2 | Chroma-based alignment |
+| Score format | music21 (MusicXML/MIDI) | 🔜 Phase 2 | Reference score parsing |
+| Task queue | Celery with Redis | 🔜 When needed | Currently processing runs in-process |
+
+## Design System
+
+- **Background:** Cream/warm off-white
+- **Headings:** Cormorant Garamond (serif)
+- **Body text:** DM Sans (sans-serif)
+- **Primary buttons:** Charcoal/dark
+- **Accent:** Warm gold/brown tones
+- **Icons:** Lucide React
+- **Approach:** Minimal, clean, the app should feel invisible while teaching
+
+## Critical UX Principle: Observations Pattern
+
+**The single most important design decision for the full pipeline.**
+
+When the audio analysis pipeline is complete, the system should NOT present a finished summary as ground truth. Instead, it presents **observations** — individual findings that the teacher reviews and selects before the summary is generated.
+
+### Why This Matters
+
+Music teachers have trained ears. If the system says "measure 48" and it was actually measure 46, the teacher thinks "this tool doesn't know what it's talking about" and never trusts it again. A single wrong detail can kill adoption.
+
+### How It Works
+
+```
+Processing complete → System generates observations:
+
+  ✅ Piece identified: Vivaldi Concerto in A minor, Mvt. 1
+  ✅ Run-through of opening section (~mm. 1–44), ♩≈78
+  ✅ Focused repetition on string crossing passage, 4 attempts
+  ✅ Tempo building: ♩=58 → ♩=70 across attempts
+  ☐ Intonation drift in higher positions (avg +15 cents)
+  ✅ Sight-read new section (~mm. 78–95), ♩≈52
+  ✅ A minor scale, 3 octaves
+  ☐ 4th finger trending flat on descending passages
+
+  [Generate Summary]
+```
+
+Teacher glances through in 10 seconds, unchecks anything wrong, optionally edits, hits Generate. The LLM writes the summary using only approved observations.
+
+### Trust Ladder
+
+1. **Phase 1 (now):** Summary from transcript only. Things that are easy to get right — piece names, general observations, practice suggestions.
+2. **Phase 2:** Add musical observations with confidence gating. Only show high-confidence data. Use hedged language ("approximately," "~mm.") for medium confidence. Silently omit low-confidence analysis.
+3. **Phase 3:** As teachers confirm observations over time, system accuracy improves. Gradually show more specific data as confidence warrants it.
+
+### Confidence Gating Rules
+
+Every analysis stage outputs a confidence score (0.0 to 1.0):
+
+| Confidence | Behavior |
+|---|---|
+| High (>85%) | Show as observation with specific data: "mm. 45–62: ♩=78" |
+| Medium (60–85%) | Show with hedged language: "~mm. 45–62: ♩≈78" |
+| Low (<60%) | Omit from observations entirely |
+
+**Core principle: Never present uncertain analysis as fact. Teacher trust is the product's most valuable asset. Better to say less than say wrong things.**
+
+### Feedback Loop
+
+Every unchecked/edited observation is logged as a signal that the analysis was wrong. This data feeds back into pipeline improvement — you know exactly which stage needs work without teachers filing bug reports.
+
+## Upcoming Features
+
+### Silero VAD Pre-processing (Next Up)
+
+**Problem:** Currently sending full mixed audio (teacher voice + student instrument) to Whisper. Whisper hallucinates on music segments.
+
+**Solution:** Run Silero VAD to strip non-speech segments before sending to Whisper. PyTorch already installed (for Demucs), so no new dependency.
+
+**Flow:**
+```
+Audio file (.webm) → torchaudio load → Silero VAD → speech timestamps
+    → Store VAD map as JSON on lesson record (vad_segments)
+    → Extract speech-only segments with timestamp mapping table
+    → Concatenate with 300ms silence gaps → temp file → Groq Whisper
+    → Remap Whisper timestamps back to real lesson time
+    → Continue to narrative stage
+```
+
+**Critical:** Timestamp remapping. When music is stripped, Whisper's timestamps are in trimmed-audio time. Must remap to real-lesson time before storing, otherwise clips and future score alignment won't line up.
+
+**The VAD segments JSON becomes the backbone for both transcription and the future clips feature.** Later, the full audio analysis pipeline reads from this same map to know which segments to analyze as music.
+
+### Audio Clips
+
+**Value:** Teacher taps play on a specific section, hears that exact moment. No scrubbing through 30 minutes. Summary becomes a living document, not just text.
+
+**Also for parents:** Teacher selects which clips to share. Parent receives lesson summary + audio links. Parent taps link, hears their kid playing in a simple web player. No app, no account needed.
+
+**Flow:**
+```
+Full audio (30 min, ~15MB)
+    → VAD map gives segment boundaries
+    → Slice into clips using torchaudio
+    → Upload clips to Supabase Storage: clips/{lesson_id}/segment_001.webm
+    → Link clips to timeline entries in database
+    → Delete full audio from Railway local disk
+    → Total clips: ~3-5MB vs 15MB full recording
+```
+
+**Summary page UX:**
+```
+✅ Run-through of opening section (~mm. 1–44), ♩≈78  🔊
+✅ Focused repetition on string crossings, 4 attempts  🔊
+✅ Teacher instruction: "relax bow arm at crossing"  🔊
+```
+
+Each 🔊 is an inline play button. Teacher also sees a share icon to select clips for parent message.
+
+**Parent message with clip:**
+> Sofia had a wonderful lesson today! Here's a clip of her playing the Vivaldi — you can really hear the improvement. 🎵 [Listen →]
+
+The listen link opens a lightweight public page with just an audio player — no login needed.
+
+### Parent Portal
+
+**Concept:** Teacher generates a unique link per student, sends it to the parent once. Parent bookmarks it. Every time they open it, they see the latest lesson reports and shared clips. No app, no account, no login.
+
+**What the parent sees at `/parent/{token}`:**
+- Student name + teacher name
+- Running list of lessons with parent summaries
+- Shared audio clips with inline playback
+- Practice assignments for the current week
+
+**How it works:**
+- Each student gets a `parent_portal_token` (UUID, unguessable)
+- Public Next.js page at `/parent/{token}` — no auth required
+- Only shows parent-facing summaries and teacher-shared clips (never teacher notes)
+- Teacher controls everything: which summaries are visible, which clips are attached
+- Teacher can regenerate token if needed (old link stops working)
+
+**What this replaces:** Currently teacher copies parent message every week and pastes into WhatsApp manually. With the portal, teacher approves summary once and it appears automatically. Teacher sends the link once and never thinks about it again.
+
+### The Codex v1 (Piece Library + Teaching Tips)
+
+**Concept:** Searchable library of pieces with community-contributed teaching tips. No graph algorithms, no effectiveness scoring. Just a place where a teacher can look up a piece and find useful stuff.
+
+**What teacher sees:**
+- Search bar + browse by instrument/level
+- Piece pages with: score links (IMSLP, MuseScore), common focus areas, teaching tips from other teachers
+- Teacher-contributed tips with attribution and upvotes
+- "On Orpheus" stats that auto-populate from lesson data (teacher count, average time to learn, common transitions)
+
+**Technical scope:**
+- New tables: `Piece` (metadata, links, focus areas) + `TeachingTip` (content, teacher attribution, helpful count) + `PieceResource` (links to scores, arrangements, backing tracks)
+- API: search pieces, get piece detail, add tip, upvote tip, add resource
+- Frontend: `/codex` (search/browse) + `/codex/{pieceId}` (piece detail)
+- Seed data: 50-100 well-known pieces with basic metadata
+
+**Auto-connection to lessons:** Pipeline already extracts piece names from transcripts. Add one step to update Codex stats after each lesson — teacher count, piece assignments, transitions.
+
+## Future Vision
+
+### Student Practice Recording
+
+The same audio pipeline built for lesson documentation can power student practice recording. This was the original product concept, rejected early due to adoption barriers (recording friction + screen time paradox).
+
+**What's different later:** By the time this makes sense, the parent portal exists and parents are already engaged. Practice recording becomes an opt-in extension of an existing workflow, not a standalone app.
+
+**How it would work:** Parent opens portal, sees assignment, taps "Record Practice." Kid plays. Same pipeline runs. Teacher sees before next lesson: "Sofia practiced 4 times this week, focused mostly on string crossings as assigned."
+
+**When to revisit:** After parent portal is live and parents are actively engaging. If parents use the portal, practice recording is natural next step. If they don't, this won't work either.
+
+### Teacher Knowledge Marketplace
+
+Evolution of The Codex from free tips to paid content. Teachers sell annotated scores, custom exercises, lesson plans, video demonstrations. Platform takes 15-20%. Effectiveness ratings from Codex data make paid content evidence-backed. Teacher contributor profiles become professional credentials.
+
+**When to revisit:** After Codex v1 proves teachers contribute and find tips useful.
+
+## Design Decisions and Principles
+
+### Tempo Data Needs Intent-Awareness
+
+**Flagged for when full audio pipeline exists.** Tempo isn't a monotonic progress metric. Playing slower is often correct — slow practice for maintenance, teacher asked student to focus on tone, warming up, expressive rubato. A system that says "♩=70, down from ♩=78 last week" when the teacher deliberately asked the student to slow down is tone-deaf and erodes trust.
+
+**Principle:** Tempo data only means something when paired with intent. Intent lives in what the teacher said, not in the audio analysis alone. Don't editorialize tempo changes without understanding context from speech.
+
+### Measure Numbers and Physical Pointing
+
+When a teacher says "let's work from here to here" while pointing at the score, the transcript-only pipeline can't determine measure numbers. The full audio pipeline solves this — DTW alignment identifies measures from what the student plays, not from what the teacher says. Until then, accept that Phase 1 summaries say "worked on a passage" instead of "worked on mm. 50-80."
 
 ## Project Structure
 
 ```
 orpheus/
 ├── CLAUDE.md                    # This file
-├── README.md
-├── docker-compose.yml           # Redis (for task queue)
+├── orpheus-blueprint.md         # Full product blueprint
 ├── pyproject.toml               # Python dependencies
 │
 ├── server/                      # FastAPI backend
-│   ├── main.py                  # App entry point, CORS, lifespan
-│   ├── config.py                # Environment variables, Supabase client init
-│   ├── database.py              # SQLAlchemy setup, Supabase connection
+│   ├── main.py                  # App entry, CORS (dynamic origin reflection), lifespan
+│   ├── config.py                # Environment variables, Pydantic settings
+│   ├── database.py              # Async SQLAlchemy, statement_cache_size=0
+│   ├── auth.py                  # JWKS-based JWT verification (Supabase ECC tokens)
 │   │
 │   ├── models/                  # SQLAlchemy ORM models
-│   │   ├── student.py           # Student profile
+│   │   ├── student.py           # Student profile (scoped by teacher_id)
 │   │   ├── lesson.py            # Lesson record (with immutability)
 │   │   ├── piece.py             # Musical piece metadata
 │   │   ├── lesson_segment.py    # Individual segment within a lesson
 │   │   ├── assignment.py        # Practice assignment with status tracking
-│   │   ├── parent_message.py    # Parent communication log with delivery status
+│   │   ├── parent_message.py    # Parent communication log
 │   │   └── attendance.py        # Attendance/cancellation records
 │   │
 │   ├── schemas/                 # Pydantic request/response schemas
@@ -110,28 +450,38 @@ orpheus/
 │   │   ├── lesson.py
 │   │   ├── summary.py
 │   │   ├── parent_message.py
-│   │   └── export.py            # Student record export request/response
+│   │   └── export.py
 │   │
-│   ├── api/                     # API route handlers
+│   ├── api/                     # API route handlers (all scoped by teacher_id)
 │   │   ├── students.py          # CRUD for students
-│   │   ├── lessons.py           # Start/stop lesson, get summary, confirm/amend
+│   │   ├── lessons.py           # Start/stop lesson, get summary, upload audio
 │   │   ├── pieces.py            # Score database queries
-│   │   ├── parents.py           # Parent message endpoints + communication log
-│   │   ├── assignments.py       # Assignment tracking and status updates
-│   │   └── export.py            # Student record export (PDF, JSON)
+│   │   ├── parents.py           # Parent message endpoints
+│   │   ├── assignments.py       # Assignment tracking (teacher_id verified via student join)
+│   │   └── export.py            # Student record export
 │   │
 │   └── services/                # Business logic
-│       ├── audio_upload.py      # Upload audio to Supabase Storage
+│       ├── audio_upload.py      # Handle incoming audio files
 │       ├── lesson_service.py    # Lesson lifecycle management
-│       └── export_service.py    # Generate student record PDF exports
+│       └── export_service.py    # Generate student record exports
 │
 ├── processing/                  # Audio processing pipeline
-│   ├── pipeline.py              # Main orchestrator — runs all stages in order
-│   ├── worker.py                # Celery/RQ worker entry point
+│   ├── pipeline.py              # Main orchestrator (uses sync DB engine)
+│   │                            # Builds Whisper prompt, formats timestamps,
+│   │                            # queries previous lesson, calls stages
 │   │
 │   ├── stages/                  # Each processing stage as a module
+│   │   ├── transcription.py     # Groq/Whisper: speech → timestamped text
+│   │   │                        # Accepts prompt parameter for vocabulary hints
+│   │   ├── narrative.py         # Claude Haiku 4.5 → teacher + parent summaries
+│   │   │                        # Includes: transcript cleanup, timestamp awareness,
+│   │   │                        # previous lesson continuity, formal mode option
+│   │   │
+│   │   │  # Next stage (Phase 1.75):
+│   │   ├── vad.py               # Silero VAD: strip music before Whisper (planned)
+│   │   │
+│   │   │  # Future stages (Phase 2+):
 │   │   ├── source_separation.py # Demucs: split speech from instrument
-│   │   ├── transcription.py     # Whisper: speech → timestamped text
 │   │   ├── entity_extraction.py # Extract piece names from transcript
 │   │   ├── pitch_detection.py   # pYIN: audio → pitch curve
 │   │   ├── chroma_extraction.py # STFT → 12-dim chroma features
@@ -139,82 +489,91 @@ orpheus/
 │   │   ├── beat_tracking.py     # madmom: → beat positions + BPM
 │   │   ├── segmentation.py      # Silence detection → lesson segments
 │   │   ├── score_alignment.py   # DTW: student chroma ↔ reference chroma
-│   │   ├── intonation.py        # Pitch deviation analysis + pattern detection
+│   │   ├── intonation.py        # Pitch deviation analysis
 │   │   ├── behavior.py          # Classify: run-through, spot practice, etc.
-│   │   ├── timeline_merge.py    # Combine speech + music into unified timeline
-│   │   └── narrative.py         # Claude API → teacher + parent summaries
+│   │   └── timeline_merge.py    # Combine speech + music into timeline
 │   │
 │   └── utils/
 │       ├── audio_io.py          # Load/save/convert audio files
 │       ├── confidence.py        # Confidence scoring utilities
 │       └── music_theory.py      # Cents calculation, note naming, etc.
 │
-├── scores/                      # Score database
-│   ├── loader.py                # Parse MusicXML/MIDI into internal format
-│   ├── database.py              # Score lookup and matching
-│   ├── chroma_cache.py          # Pre-computed chroma for reference scores
-│   └── data/                    # MusicXML files (start with Suzuki violin)
-│       ├── suzuki_book1/
-│       ├── suzuki_book2/
-│       └── ...
-│
 ├── frontend/                    # Next.js web app
 │   ├── package.json
+│   ├── lib/
+│   │   ├── supabase.ts          # Supabase client (browser)
+│   │   └── api.ts               # API client (auto-attaches Bearer token)
 │   ├── app/
-│   │   ├── page.tsx             # Landing / login
+│   │   ├── login/page.tsx       # Email/password login + signup
+│   │   ├── page.tsx             # Redirects to dashboard
 │   │   ├── lesson/
-│   │   │   ├── record/page.tsx  # Record screen (student name + record button)
-│   │   │   └── [id]/page.tsx    # Lesson summary view (confirm, amend, send)
+│   │   │   ├── record/page.tsx  # Record screen (student select + record button)
+│   │   │   └── [id]/page.tsx    # Lesson summary view
 │   │   ├── students/
 │   │   │   ├── page.tsx         # Student list
-│   │   │   ├── [id]/page.tsx    # Student profile + history
-│   │   │   ├── [id]/record/page.tsx      # Student record (professional docs)
-│   │   │   └── [id]/export/page.tsx      # Export student record as PDF
-│   │   └── dashboard/
-│   │       └── page.tsx         # Teacher dashboard
+│   │   │   └── [id]/page.tsx    # Student profile + history
+│   │   ├── dashboard/
+│   │   │   └── page.tsx         # Teacher dashboard (studio overview)
+│   │   └── parent/
+│   │       └── [token]/page.tsx # Public parent portal (future)
 │   └── components/
-│       ├── AudioRecorder.tsx     # MediaRecorder wrapper
-│       ├── LessonSummary.tsx     # Summary display (standard + formal toggle)
+│       ├── AudioRecorder.tsx     # MediaRecorder wrapper (music-optimized)
+│       ├── LessonSummary.tsx     # Summary display
+│       ├── SendToParentModal.tsx # Parent message with Copy button
 │       ├── StudentCard.tsx       # Student list item
-│       ├── ParentMessage.tsx     # Parent message preview + send
-│       ├── CommunicationLog.tsx  # Scrollable log of all parent messages
-│       ├── AssignmentTracker.tsx  # Assignment list with status indicators
-│       └── ConfirmButton.tsx     # Lesson confirmation with lock behavior
+│       ├── AuthGuard.tsx         # Redirects to /login if no session
+│       ├── AppShellWrapper.tsx   # Sidebar/nav layout (hidden on login)
+│       └── AssignmentTracker.tsx # Assignment list with status
 │
-├── tests/
-│   ├── test_pipeline.py         # End-to-end pipeline tests
-│   ├── test_alignment.py        # DTW alignment tests with known scores
-│   ├── test_pitch.py            # Pitch detection accuracy tests
-│   └── fixtures/                # Test audio files, reference scores
-│       ├── sample_lesson.wav
-│       ├── vivaldi_a_minor.musicxml
-│       └── expected_output.json
-│
-└── scripts/
-    ├── seed_scores.py           # Load initial score database
-    ├── generate_chroma_cache.py # Pre-compute reference chromas
-    └── simulate_lesson.py       # Generate test data
+└── tests/
+    ├── test_pipeline.py         # End-to-end pipeline tests
+    └── fixtures/                # Test audio files
 ```
 
 ## Key Domain Concepts
 
 ### Lesson
-A single recording session between a teacher and one student. Has a start time, end time, associated student, and produces a structured timeline and summary after processing.
+A single recording session between a teacher and one student. Has a start time, end time, associated student, and produces observations and summaries after processing.
+
+### Observation (Future — Phase 2+)
+A single finding from the audio analysis pipeline — e.g., "Run-through of opening section, ♩≈78" or "Intonation drift in higher positions." Each observation has a confidence score. Teachers review and approve observations before summary generation.
 
 ### Segment
 A continuous section of audio within a lesson, bounded by silence gaps. Each segment is classified as SPEECH, MUSIC, or SILENCE. Music segments are further aligned to score positions.
+
+### VAD Segments (Upcoming)
+JSON array stored on the lesson record from Silero VAD analysis. Each entry has start, end, and type (speech/music/silence). Used by the transcription pipeline (which segments to send to Whisper) and the clips pipeline (where to slice audio). Later, the full audio analysis pipeline reads from this same map.
 
 ### Score Alignment
 The process of mapping a student's audio to specific positions (measure numbers) in a known musical score, using Dynamic Time Warping (DTW) on chroma features.
 
 ### Chroma Features
-A 12-dimensional representation of audio where each dimension corresponds to a pitch class (C, C#, D, ..., B), regardless of octave. This is the shared representation used to compare student audio against reference scores.
+A 12-dimensional representation of audio where each dimension corresponds to a pitch class (C, C#, D, ..., B), regardless of octave. This is the shared representation used to compare student audio against reference scores. Works for both monophonic (violin) and polyphonic (piano) instruments.
 
 ### Lesson Timeline
 The final merged data structure combining speech transcript entries and music analysis entries in chronological order. This is the JSON that gets sent to the LLM for narrative generation.
 
 ### Summary
-The human-readable output. Two versions: teacher-facing (specific, technical, includes measure numbers and tempos) and parent-facing (warm, encouraging, non-technical, actionable).
+The human-readable output. Two versions: teacher-facing (specific, technical) and parent-facing (warm, encouraging, non-technical, written from teacher to parent about their child).
+
+### Parent Portal Token
+A UUID assigned to each student, used as the URL path for the public parent portal. Unguessable, no login required. Teacher sends link once, parent bookmarks it.
+
+## Parent Message Guidelines
+
+**Perspective:** Always written as the teacher speaking to the parent about their child. Third person for the student ("Sofia had a wonderful lesson" not "Great job, Sofia!"). Never address the student directly.
+
+**Tone:** Warm, encouraging, professional — like a teacher's note sent home.
+
+**Structure:**
+1. Open with something genuinely positive about today's lesson
+2. Briefly describe what was worked on (non-technical language)
+3. One or two specific things the parent can encourage at home
+4. Recommended daily practice duration
+
+**Never use:** struggled, failed, couldn't, wrong, mistake, problem, weak, poor, bad, behind, slow (in context of learning pace)
+
+**Delivery:** Currently copy-to-clipboard only. Teacher pastes into WhatsApp, Telegram, iMessage, or any messaging app. Parent portal planned as primary delivery method.
 
 ## Data Models
 
@@ -222,16 +581,16 @@ The human-readable output. Two versions: teacher-facing (specific, technical, in
 ```python
 class Student:
     id: UUID
-    teacher_id: UUID
-    name: str                        # First name, entered on first lesson
-    instrument: str                  # Inherited from teacher's profile
+    teacher_id: UUID              # Scoped — every query filters by this
+    name: str
+    instrument: str
     created_at: datetime
-    # Everything below is populated progressively from lessons:
-    current_pieces: list[str]        # Detected from lesson content
-    estimated_level: str | None      # Inferred from repertoire
-    notes: str | None                # Teacher's manual notes
-    parent_email: str | None         # Added when teacher first sends a message
+    current_pieces: list[str]     # Detected from lesson content
+    estimated_level: str | None
+    notes: str | None
+    parent_email: str | None
     parent_phone: str | None
+    parent_portal_token: UUID     # Future: unique token for parent portal link
 ```
 
 ### Lesson
@@ -239,720 +598,188 @@ class Student:
 class Lesson:
     id: UUID
     student_id: UUID
-    teacher_id: UUID
+    teacher_id: UUID              # Scoped — every query filters by this
     started_at: datetime
     ended_at: datetime
     duration_seconds: int
-    audio_file_path: str | None      # Supabase Storage path, deleted after processing
-    status: str                      # "recording", "processing", "completed", "failed"
-    summary_style: str               # "standard" or "formal" (teacher preference)
+    audio_file_path: str | None   # Railway local disk, not Supabase Storage
+    status: str                   # "recording", "processing", "completed", "failed"
     # Populated after processing:
-    pieces_detected: list[str]       # Piece names found in this lesson
-    timeline_json: dict              # Full merged timeline
-    teacher_summary: str             # LLM-generated teacher summary
-    teacher_summary_formal: str | None  # Formal/clinical version (if formal mode)
-    parent_summary: str              # LLM-generated parent summary
+    pieces_detected: list[str]
+    timeline_json: dict
+    teacher_summary: str
+    parent_summary: str
     suggested_assignments: list[dict]
-    processing_metadata: dict        # Confidence scores, processing time, etc.
+    processing_metadata: dict     # Confidence scores, processing time
+    vad_segments: list[dict]      # Future: VAD segmentation map
     # Immutability:
-    confirmed_at: datetime | None    # When teacher confirmed the summary
-    is_locked: bool                  # True after confirmation — no edits to original
-    amendments: list[dict] | None    # Timestamped teacher notes added after confirmation
+    confirmed_at: datetime | None
+    is_locked: bool               # True after confirmation
+    amendments: list[dict] | None # Timestamped teacher notes after confirmation
 ```
 
-### LessonSegment
-```python
-class LessonSegment:
-    id: UUID
-    lesson_id: UUID
-    segment_type: str                # "speech", "music", "silence"
-    start_time: float                # Seconds from lesson start
-    end_time: float
-    # For speech segments:
-    transcript: str | None
-    speaker: str | None              # "teacher" or "student" (best guess)
-    # For music segments:
-    piece_id: UUID | None            # Matched piece, if identified
-    measures_start: int | None       # Score position start
-    measures_end: int | None         # Score position end
-    avg_tempo: float | None          # BPM
-    alignment_confidence: float | None  # 0.0 - 1.0
-    repetition_number: int | None    # Which repetition of this section
-    intonation_avg_cents: float | None  # Average deviation from expected pitch
+## Processing Pipeline — Current Implementation
+
+### Phase 1 + 1.5 (Live Now)
+```
+Audio saved to Railway local disk (.webm)
+    → Build Whisper prompt (static music vocab + student's known pieces + name)
+    → Groq Whisper transcription (whisper-large-v3, verbose_json)
+    → Format timestamped segments as [M:SS] text
+    → Query previous lesson summary for this student
+    → Claude Haiku 4.5 generates summaries
+       (with transcript cleanup + timestamps + previous lesson context)
+    → Persist to lesson record, set status = "completed"
 ```
 
-### Piece (Score Database)
-```python
-class Piece:
-    id: UUID
-    title: str                       # "Concerto in A minor"
-    composer: str                    # "Vivaldi"
-    catalog_number: str | None       # "RV 356"
-    movement: str | None             # "Mvt. 1"
-    instrument: str                  # "violin"
-    difficulty_level: str | None     # "intermediate"
-    source: str                      # "suzuki_book4", "imslp", "community", "omr_scan"
-    score_file_path: str             # Path to MusicXML file
-    chroma_cache_path: str | None    # Pre-computed reference chroma (numpy file)
-    total_measures: int
-    estimated_duration_seconds: int
-    key_signature: str | None
-    time_signature: str | None
-    search_aliases: list[str]        # ["vivaldi", "vivaldi a minor", "rv 356"]
+### Phase 1.75 (Next — VAD)
+```
+Audio saved to Railway local disk (.webm)
+    → Silero VAD: classify frames as speech/music/silence
+    → Store VAD map on lesson record
+    → Extract speech-only audio with timestamp mapping
+    → Build Whisper prompt
+    → Groq Whisper on speech-only audio
+    → Remap timestamps to real lesson time
+    → Format + query previous lesson + Claude generates summaries
 ```
 
-### ParentMessage (Communication Log)
-```python
-class ParentMessage:
-    id: UUID
-    lesson_id: UUID
-    student_id: UUID
-    teacher_id: UUID
-    # Content:
-    message_body: str                # Exact text that was sent
-    message_type: str                # "lesson_summary", "progress_report", "custom"
-    # Delivery:
-    channel: str                     # "email" or "sms"
-    recipient: str                   # Email address or phone number
-    sent_at: datetime
-    delivered_at: datetime | None    # Delivery confirmation timestamp
-    delivery_status: str             # "sent", "delivered", "failed", "bounced"
-    # Immutable — once sent, the record cannot be altered
-```
-
-### AssignmentRecord (Practice Assignment Log)
-```python
-class AssignmentRecord:
-    id: UUID
-    lesson_id: UUID                  # Lesson where this was assigned
-    student_id: UUID
-    assigned_at: datetime
-    description: str                 # "Measures 45-62, target ♩=80"
-    details: str | None              # Additional context
-    # Updated after subsequent lesson:
-    status: str                      # "assigned", "achieved", "partially_achieved", "not_attempted"
-    status_updated_at: datetime | None
-    weeks_persisted: int             # How many consecutive weeks this was assigned
-```
-
-### AttendanceRecord (Auto-generated from lessons)
-```python
-class AttendanceRecord:
-    student_id: UUID
-    term: str                        # "2026-spring" or date range
-    total_lessons: int
-    total_minutes: int
-    cancellations_student: int       # Student-initiated cancellations
-    cancellations_teacher: int       # Teacher-initiated cancellations
-    no_shows: int
-    # Computed:
-    attendance_rate: float           # Percentage of scheduled lessons attended
-```
-
-## Processing Pipeline — Detailed Implementation Notes
-
-### Stage 1: Source Separation (Demucs)
-
-```python
-# Use the htdemucs model — best for vocal/instrument separation
-# Input: single audio file (lesson recording)
-# Output: two files — vocals (speech) and accompaniment (instrument)
-
-import torchaudio
-from demucs.pretrained import get_model
-from demucs.apply import apply_model
-
-model = get_model("htdemucs")
-wav, sr = torchaudio.load("lesson.wav")
-sources = apply_model(model, wav[None], device="cuda")
-# sources shape: [1, num_sources, channels, samples]
-# htdemucs sources: drums, bass, other, vocals
-# We want: vocals (index 3) = speech, other (index 2) ≈ instrument
-speech_audio = sources[0, 3]   # vocals track
-instrument_audio = sources[0, 2]  # other track
-```
-
-**Important:** If CUDA/GPU is not available, Demucs runs on CPU but is much slower (~10x). For MVP on a development machine, consider processing shorter test files or using the smaller `htdemucs_ft` model.
-
-### Stage 2: Speech Transcription (Whisper)
-
-```python
-import whisper
-
-model = whisper.load_model("base")  # Use "small" or "medium" for better accuracy
-result = model.transcribe("speech.wav", word_timestamps=True)
-
-# result["segments"] contains timestamped transcript:
-# [{"start": 0.0, "end": 3.2, "text": "Let's hear the Vivaldi"}, ...]
-```
-
-**Model size tradeoffs:**
-- `tiny`: Fastest, least accurate. Good for testing.
-- `base`: Good balance for MVP.
-- `small`: Noticeably better accuracy, 2x slower than base.
-- `medium`: Best practical accuracy, 5x slower than base.
-- `large-v3`: Best accuracy, requires significant GPU memory.
-
-### Stage 3: Entity Extraction
-
-Search the transcript for piece names using fuzzy matching against the score database.
-
-```python
-# Simple approach: check each transcript segment for keywords
-# that match piece titles, composers, or aliases in the database
-from rapidfuzz import fuzz, process
-
-def find_pieces_in_transcript(transcript_segments, piece_database):
-    """
-    Search transcript for references to known pieces.
-    Returns list of (piece_id, confidence, transcript_segment).
-    """
-    matches = []
-    all_aliases = []  # [(alias_string, piece_id), ...]
-    for piece in piece_database:
-        for alias in piece.search_aliases:
-            all_aliases.append((alias, piece.id))
-
-    for segment in transcript_segments:
-        text = segment["text"].lower()
-        # Check against all aliases with fuzzy matching
-        results = process.extract(text, [a[0] for a in all_aliases],
-                                  scorer=fuzz.partial_ratio, limit=3)
-        for match_text, score, idx in results:
-            if score > 80:  # Threshold for match confidence
-                piece_id = all_aliases[idx][1]
-                matches.append((piece_id, score / 100.0, segment))
-    return matches
-```
-
-**For MVP:** Start simple with keyword matching. Get fancier later if needed.
-
-### Stage 4-5: Pitch Detection and Chroma Extraction
-
-```python
-import librosa
-import numpy as np
-
-# Load the instrument audio
-y, sr = librosa.load("instrument.wav", sr=22050)
-
-# Pitch detection with pYIN
-f0, voiced_flag, voiced_probs = librosa.pyin(
-    y, fmin=librosa.note_to_hz('C2'),
-    fmax=librosa.note_to_hz('C7'),
-    sr=sr
-)
-# f0: array of fundamental frequency estimates (Hz), NaN for unvoiced frames
-# voiced_flag: boolean array, True where voicing detected
-# voiced_probs: confidence of voicing per frame
-
-# Chroma features
-chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=512)
-# chroma shape: (12, num_frames) — one 12-dim vector per time frame
-# Each row = pitch class energy: C, C#, D, D#, E, F, F#, G, G#, A, A#, B
-
-# Time axis for chroma frames
-times = librosa.frames_to_time(np.arange(chroma.shape[1]), sr=sr, hop_length=512)
-```
-
-### Stage 6-7: Onset Detection and Beat Tracking
-
-```python
-import librosa
-
-# Onset detection
-onset_frames = librosa.onset.onset_detect(y=y, sr=sr, hop_length=512)
-onset_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=512)
-
-# Beat tracking
-tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
-beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=512)
-# tempo: estimated global BPM
-# beat_times: array of timestamps where beats occur
-
-# For per-segment tempo, compute local BPM from beat intervals:
-def local_tempo(beat_times_segment):
-    """Compute BPM from a sequence of beat timestamps."""
-    if len(beat_times_segment) < 2:
-        return None
-    intervals = np.diff(beat_times_segment)
-    avg_interval = np.mean(intervals)
-    return 60.0 / avg_interval
-```
-
-**Note on madmom:** madmom's RNNBeatProcessor is more accurate than librosa's beat tracker for real-world music. However, madmom has stricter dependency requirements. For MVP, start with librosa. Swap in madmom later if beat tracking accuracy is insufficient.
-
-```python
-# madmom alternative (more accurate, use if librosa isn't good enough):
-# pip install madmom
-# from madmom.features.beats import RNNBeatProcessor, DBNBeatTrackingProcessor
-# proc = DBNBeatTrackingProcessor(fps=100)
-# act = RNNBeatProcessor()(audio_file)
-# beat_times = proc(act)
-```
-
-### Stage 8: Segmentation
-
-```python
-import librosa
-import numpy as np
-
-def segment_lesson(y, sr, silence_threshold_db=-40, min_silence_duration=2.0):
-    """
-    Split lesson audio into segments based on silence gaps.
-    Returns list of (start_time, end_time, segment_type).
-    """
-    # Compute RMS energy in short frames
-    hop_length = 512
-    rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
-    rms_db = librosa.amplitude_to_db(rms)
-    times = librosa.frames_to_time(np.arange(len(rms_db)), sr=sr, hop_length=hop_length)
-
-    # Find silence regions
-    is_silent = rms_db < silence_threshold_db
-    min_frames = int(min_silence_duration * sr / hop_length)
-
-    segments = []
-    current_start = 0
-    in_silence = False
-    silence_start = 0
-
-    for i, silent in enumerate(is_silent):
-        if silent and not in_silence:
-            silence_start = i
-            in_silence = True
-        elif not silent and in_silence:
-            if (i - silence_start) >= min_frames:
-                # Long enough silence — create segment boundary
-                if current_start < silence_start:
-                    segments.append((times[current_start], times[silence_start], "content"))
-                segments.append((times[silence_start], times[i], "silence"))
-                current_start = i
-            in_silence = False
-
-    # Final segment
-    if current_start < len(times):
-        segments.append((times[current_start], times[-1], "content"))
-
-    return segments
-```
-
-### Stage 9: Score Alignment (DTW)
-
-This is the most critical and complex stage. It maps student audio to measure positions in the score.
-
-```python
-import librosa
-import numpy as np
-
-def align_to_score(student_chroma, reference_chroma, reference_measures):
-    """
-    Align student performance to a reference score using DTW.
-
-    Args:
-        student_chroma: (12, N) chroma features from student audio
-        reference_chroma: (12, M) chroma features from reference score
-        reference_measures: array of length M mapping each reference frame
-                           to a measure number
-
-    Returns:
-        alignment: list of (student_time, measure_number, confidence)
-    """
-    # Compute DTW
-    D, wp = librosa.sequence.dtw(
-        X=student_chroma,
-        Y=reference_chroma,
-        metric='cosine'
-    )
-    # wp: warping path, array of (student_frame, reference_frame) pairs
-    # D: accumulated cost matrix
-
-    # Alignment confidence: normalized path cost
-    path_cost = D[wp[-1, 0], wp[-1, 1]]
-    path_length = len(wp)
-    avg_cost = path_cost / path_length  # Lower = better alignment
-    confidence = max(0.0, 1.0 - avg_cost)  # Simple confidence heuristic
-
-    # Map student frames to measure numbers via the warping path
-    alignment = []
-    for student_frame, ref_frame in wp:
-        measure = reference_measures[ref_frame]
-        alignment.append((student_frame, measure))
-
-    return alignment, confidence
-
-
-def build_reference_chroma(score_file_path, sr=22050, hop_length=512):
-    """
-    Load a MusicXML file and synthesize reference chroma features.
-    Uses music21 to parse the score and generate a MIDI-like representation,
-    then computes chroma from the synthesized audio.
-    """
-    from music21 import converter, midi
-
-    score = converter.parse(score_file_path)
-
-    # Create measure number mapping
-    # For each time position in the score, record the measure number
-    measure_map = {}
-    for part in score.parts:
-        for measure in part.getElementsByClass('Measure'):
-            measure_num = measure.number
-            start_offset = measure.offset
-            end_offset = start_offset + measure.duration.quarterLength
-            measure_map[(start_offset, end_offset)] = measure_num
-
-    # Export to MIDI and synthesize audio for chroma computation
-    midi_file = midi.translate.streamToMidiFile(score)
-    midi_file.open('/tmp/reference.mid', 'wb')
-    midi_file.write()
-    midi_file.close()
-
-    # Load MIDI as audio using fluidsynth (or just compute chroma from MIDI directly)
-    # Alternative: compute chroma directly from MIDI note events
-    # This is more reliable than synthesizing audio:
-    reference_chroma = compute_chroma_from_midi('/tmp/reference.mid', sr, hop_length)
-
-    return reference_chroma, measure_map
-```
-
-**Important implementation note:** Computing reference chroma from MIDI note events directly (rather than synthesizing audio and then extracting chroma) is more reliable and faster. You create a "piano roll" matrix and project it down to 12 chroma bins.
-
-### Stage 12: Timeline Merge
-
-```python
-def merge_timeline(speech_segments, music_segments):
-    """
-    Combine speech transcript and music analysis into a single
-    chronological timeline.
-
-    Returns a list of timeline entries sorted by start_time.
-    """
-    timeline = []
-
-    for seg in speech_segments:
-        timeline.append({
-            "type": "speech",
-            "start_time": seg["start"],
-            "end_time": seg["end"],
-            "text": seg["text"],
-            "speaker": seg.get("speaker", "unknown")
-        })
-
-    for seg in music_segments:
-        timeline.append({
-            "type": "music",
-            "start_time": seg["start_time"],
-            "end_time": seg["end_time"],
-            "measures_start": seg.get("measures_start"),
-            "measures_end": seg.get("measures_end"),
-            "avg_tempo": seg.get("avg_tempo"),
-            "repetition_number": seg.get("repetition_number"),
-            "alignment_confidence": seg.get("alignment_confidence"),
-            "intonation_avg_cents": seg.get("intonation_avg_cents")
-        })
-
-    timeline.sort(key=lambda x: x["start_time"])
-    return timeline
-```
-
-### Stage 13: LLM Narrative Generation
-
-```python
-import anthropic
-
-def generate_summaries(lesson_timeline, student_name, piece_name,
-                       previous_lesson=None, assignments=None,
-                       summary_style="standard"):
-    """
-    Generate teacher summary and parent summary from structured lesson data.
-    summary_style: "standard" (concise, conversational) or "formal" (clinical, for records)
-    """
-    client = anthropic.Anthropic()
-
-    formal_instruction = ""
-    if summary_style == "formal":
-        formal_instruction = """
-FORMAL TEACHER SUMMARY: Additionally, generate a formal documentation-style record
-suitable for professional or legal purposes. Use clinical, precise language. Structure as:
-- Date, time, duration header
-- Numbered list of content covered with measure numbers and tempos
-- Observations section with objective technical notes
-- Assignments given with specific targets
-- Previous assignment status (achieved/partially achieved/not attempted)
-This record may be used as professional documentation. Be precise and factual.
-Do NOT editorialize or use casual language in the formal version.
-"""
-
-    system_prompt = f"""You are a music lesson documentation assistant.
-You receive structured data from a music lesson and generate summaries.
-
-TEACHER SUMMARY: Concise, specific, uses musical terminology. Include measure
-numbers and tempos. Focus on what was covered, measurable progress, and areas
-needing attention. If previous lesson data is provided, highlight week-over-week
-changes. Suggest 2-3 specific practice assignments.
-
-PARENT SUMMARY: Warm, encouraging, non-technical. Focus on effort and progress.
-Give one specific thing the parent can encourage at home. Include recommended
-daily practice duration.
-
-NEVER use these words in the parent summary: struggled, failed, couldn't, wrong,
-mistake, problem, weak, poor, bad, behind.
-{formal_instruction}
-Respond in JSON format:
-{{
-    "teacher_summary": "...",
-    "parent_summary": "...",
-    {"\"teacher_summary_formal\": \"...\"," if summary_style == "formal" else ""}
-    "suggested_assignments": [
-        {{"description": "...", "details": "..."}},
-    ]
-}}"""
-
-    user_message = f"""Student: {student_name}
-Piece: {piece_name}
-
-Lesson timeline:
-{json.dumps(lesson_timeline, indent=2)}
-
-{"Previous lesson data:" + json.dumps(previous_lesson, indent=2) if previous_lesson else "No previous lesson data available."}
-
-{"Current assignments:" + json.dumps(assignments, indent=2) if assignments else "No current assignments."}
-"""
-
-    message = client.messages.create(
-        model="claude-sonnet-4-5-20250514",
-        max_tokens=2000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}]
-    )
-
-    return json.loads(message.content[0].text)
-```
-
-## Frontend — Key Screens
-
-### Recording Screen
-- Large, prominent record button (red circle, unmistakable)
-- Student name input (autocomplete from known students, or type new name)
-- During recording: student name, elapsed time, subtle pulsing indicator, stop button
-- Minimal UI — teacher should forget the app exists while teaching
-
-### Lesson Summary Screen
-- Piece name and date at top
-- Visual section map: which parts of the piece were worked on, how many times
-- Tempo data per section (with delta from last week if available)
-- Expandable teacher summary text (standard or formal, based on preference)
-- "Send to parent" button with message preview
-- "Edit assignments" option
-- **Confirm button** — locks the summary as an immutable record
-- After confirmation: teacher can add timestamped amendments but cannot edit the original
-- Toggle between standard and formal documentation views
-
-### Student List (Dashboard)
-- Cards for each student showing: name, last lesson date, current piece, brief status
-- Tapping a student shows their profile: lesson history, progress trends, current assignments
-- Pre-lesson brief shown prominently for students with upcoming lessons
-
-### Pre-Lesson Brief
-- Shown when teacher taps a student to start a new lesson
-- Shows: last lesson summary, assigned practice goals, key issues flagged
-- One tap to "Start Lesson" from this screen
-
-### Student Record (Professional Documentation)
-- Complete view of a student's history with the teacher
-- Tabs: Lesson History | Communication Log | Assignments | Progress
-- **Lesson History:** Scrollable list of every lesson with date, duration, pieces, confirmed summaries
-- **Communication Log:** Every parent message sent, with delivery status and timestamp
-- **Assignments:** Running list of all assignments, status (achieved/partial/not attempted), persistence count
-- **Progress:** Tempo trends, repertoire timeline, attendance statistics
-- **Export button:** Generate a PDF of the complete student record, filterable by date range
-- Export includes cover page with summary statistics: total lessons, attendance rate, pieces completed, measurable progress metrics
+### Phase 2 (Future — Full Audio Intelligence)
+Add source separation + music analysis + score alignment. See the full blueprint (`orpheus-blueprint.md`) for detailed implementation notes on each stage.
+
+Key implementation notes:
+
+- **Demucs expects 44100Hz stereo.** Resample before feeding, convert back to mono after.
+- **librosa defaults to 22050Hz.** Be explicit about `sr` in every call.
+- **DTW on full-length chroma is slow.** Segment first, align each segment independently.
+- **music21 is slow.** Cache parsed scores and pre-computed reference chromas.
+- **Whisper hallucinates on music audio.** VAD pre-processing (Phase 1.75) addresses this. Also filter low-confidence transcript segments.
+- **Processing pipeline uses sync SQLAlchemy** (psycopg2-binary) separately from the async API engine (asyncpg). The pipeline converts the DATABASE_URL by stripping `+asyncpg`.
 
 ## Audio Recording in Browser
 
 ```typescript
-// Core MediaRecorder setup for lesson recording
-// Use AAC codec if available, fallback to webm/opus
-const startRecording = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            channelCount: 1,           // Mono
-            sampleRate: 44100,         // Standard sample rate
-            echoCancellation: false,   // Don't cancel — we want all audio
-            noiseSuppression: false,   // Don't suppress — instrument is "noise"
-            autoGainControl: false     // Don't auto-adjust — dynamic range matters
-        }
-    });
-
-    // IMPORTANT: disable all browser audio processing
-    // Browser defaults will try to suppress the instrument audio
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
-
-    const recorder = new MediaRecorder(stream, {
-        mimeType,
-        audioBitsPerSecond: 64000
-    });
-
-    const chunks = [];
-    recorder.ondataavailable = (e) => chunks.push(e.data);
-    recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: mimeType });
-        uploadAudio(blob);
-    };
-
-    recorder.start(1000); // Collect in 1-second chunks
-    return recorder;
-};
+const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+        channelCount: 1,
+        sampleRate: 44100,
+        echoCancellation: false,    // CRITICAL: don't cancel instrument audio
+        noiseSuppression: false,    // CRITICAL: instrument IS the signal
+        autoGainControl: false      // CRITICAL: dynamic range matters
+    }
+});
 ```
 
 **Critical:** Disable echoCancellation, noiseSuppression, and autoGainControl. Browser defaults are designed for voice calls and will aggressively filter out musical instrument sounds.
 
-## Environment Variables
-
-```bash
-# .env file
-
-# Supabase
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=eyJ...                  # Public anon key (safe for frontend)
-SUPABASE_SERVICE_ROLE_KEY=eyJ...           # Private key (server-side only, never expose)
-DATABASE_URL=postgresql://postgres:[password]@db.[project-ref].supabase.co:5432/postgres
-
-# Task queue
-REDIS_URL=redis://localhost:6379/0
-
-# APIs
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Audio processing
-WHISPER_MODEL_SIZE=base          # tiny/base/small/medium/large-v3
-DEMUCS_MODEL=htdemucs            # htdemucs or htdemucs_ft
-SCORES_PATH=./scores/data
-
-# Optional
-SENDGRID_API_KEY=SG...           # For parent emails
-```
-
-## Development Workflow
-
-### Getting Started
-```bash
-# 1. Create a Supabase project at https://supabase.com
-#    Copy your project URL, anon key, service role key, and database URL
-#    into .env (see Environment Variables above)
-
-# 2. Install Python deps
-pip install fastapi uvicorn sqlalchemy asyncpg celery redis
-pip install supabase                       # Supabase Python client (for auth + storage)
-pip install librosa madmom music21 openai-whisper
-pip install torch torchaudio demucs
-pip install anthropic rapidfuzz
-
-# 3. Start Redis for task queue
-docker-compose up -d  # Redis only
-
-# 4. Run database migrations (creates tables in Supabase PostgreSQL)
-python -m server.database init
-
-# 5. Seed score database with initial repertoire
-python scripts/seed_scores.py
-
-# 6. Pre-compute reference chromas for all scores
-python scripts/generate_chroma_cache.py
-
-# 7. Start API server
-uvicorn server.main:app --reload
-
-# 8. Start processing worker
-celery -A processing.worker worker --loglevel=info
-
-# 9. Start frontend
-cd frontend && npm install && npm run dev
-```
-
-### Supabase Setup
-After creating your project, configure these in the Supabase dashboard:
-1. **Storage:** Create a bucket called `audio-uploads` (private, process-and-delete)
-2. **Storage:** Create a bucket called `scores` (private, persistent)
-3. **Auth:** Enable email/password sign-up for teachers
-4. **RLS:** Enable Row Level Security on all tables — teachers should only see their own data
-
-### Testing Pipeline with Sample Audio
-```bash
-# Generate a test lesson (synthesized audio for pipeline testing)
-python scripts/simulate_lesson.py --output test_lesson.wav
-
-# Run pipeline on test audio
-python -m processing.pipeline --input test_lesson.wav --student "Test Student"
-
-# Or use a real recording for more realistic testing
-```
-
-## MVP Constraints and Scope
-
-### In Scope (Build This)
-- Single instrument: violin
-- Score database: Suzuki violin Books 1-4 (~100 pieces)
-- Audio recording via web browser on phone
-- Basic source separation and speech transcription
-- DTW score alignment with confidence scoring
-- Tempo tracking per section
-- Repetition counting
-- LLM-generated teacher summary (standard + formal documentation mode)
-- LLM-generated parent summary with one-tap send
-- **Parent communication log with delivery timestamps and confirmation**
-- **Assignment tracking with status (achieved/partial/not attempted)**
-- **Lesson confirmation flow — locks summary as immutable record**
-- **Student record export as PDF (filterable by date range)**
-- Student list with lesson history
-- Pre-lesson brief
-- Week-over-week comparison (tempo deltas)
-
-### Out of Scope (Build Later)
-- Intonation pattern analysis (Phase 2)
-- Practice behavior classification beyond basic repetition counting (Phase 2)
-- OMR sheet music scanning (Phase 2)
-- Reference recording alignment for pieces without scores (Phase 3)
-- Piano and other instruments (Phase 2-3)
-- Native mobile app (web-first for MVP)
-- Monthly progress reports (Phase 3)
-- Attendance analytics dashboard (Phase 2)
-- Repertoire Graph recommendations (Phase 4 — The Codex)
-- Knowledge Graph features (Phase 4-6 — The Codex)
-- Group lesson support (Phase 4)
-- Offline recording with sync (Phase 3)
-- Rolling pre-buffer "forgot to start" rescue (Phase 2)
+**Output format:** `audio/webm;codecs=opus` at 64kbps mono 44100Hz. ~0.5MB per minute, ~15MB for 30-minute lesson. Within Groq's 25MB direct upload limit.
 
 ## Coding Conventions
 
-- **Python:** Use type hints everywhere. Pydantic for all data validation. Async where IO-bound.
-- **Naming:** snake_case for Python, camelCase for TypeScript/React. Descriptive names — `extract_chroma_features` not `get_chroma`.
-- **Error handling:** Every pipeline stage should catch exceptions and return a degraded result rather than crashing. If pitch detection fails, the pipeline continues without pitch data. Never let one stage failure kill the entire lesson processing.
-- **Confidence scores:** Every analysis stage outputs a confidence value (0.0 to 1.0). Downstream stages and the LLM narrative generator use these to decide what to include in summaries.
-- **Logging:** Structured logging (JSON) at every pipeline stage with timing. We need to know exactly where processing time is spent.
-- **Tests:** Write tests for the processing pipeline stages using fixture audio files. DTW alignment should be tested with known score/audio pairs where the expected output is manually verified.
-- **Immutability:** Lesson records become immutable once the teacher confirms them (`is_locked = True`). After confirmation, amendments can be appended (with timestamps) but the original record is never modified. Parent messages are immutable from the moment they are sent. This pattern is critical for the professional protection use case — the documentation trail must be tamper-evident.
-- **Communication logging:** Every parent message must be logged with exact content, delivery channel, timestamp, and delivery status. Never send a message without creating the log entry first. The log is the teacher's proof of communication.
+- **Python:** Type hints everywhere. Pydantic for validation. Async where IO-bound.
+- **TypeScript:** camelCase. Functional components with hooks.
+- **Naming:** Descriptive — `extract_chroma_features` not `get_chroma`.
+- **Error handling:** Every pipeline stage catches exceptions and returns degraded results. Never let one stage failure kill entire processing.
+- **Confidence scores:** Every analysis stage outputs 0.0–1.0. Used for observation gating.
+- **Logging:** Structured (JSON) at every pipeline stage with timing.
+- **Data isolation:** Every database query MUST be scoped by `teacher_id`. No exceptions.
+- **Immutability:** Confirmed lessons are locked. Amendments are appended, originals never modified.
+- **Trust over precision:** Better to show less data that's accurate than more data that might be wrong.
 
 ## Common Pitfalls
 
-1. **Browser audio processing will destroy instrument audio.** Always disable echoCancellation, noiseSuppression, and autoGainControl in MediaRecorder constraints.
+1. **Browser audio processing destroys instrument audio.** Always disable echoCancellation, noiseSuppression, autoGainControl.
+2. **Supabase pooler doesn't support prepared statements.** Always set `statement_cache_size=0` in asyncpg connect_args.
+3. **Supabase uses ECC JWT signing (P-256), not HS256.** Backend must verify via JWKS endpoint, not shared secret.
+4. **Vercel generates new preview URLs on every deploy.** CORS must use dynamic origin reflection, not a whitelist.
+5. **Railway rebuilds on every push by default.** Set watch paths to `server/**`, `processing/**`, `pyproject.toml`.
+6. **Processing pipeline needs sync DB driver.** asyncpg is for the API; psycopg2-binary is for the pipeline.
+7. **Parent messages must be teacher-to-parent perspective.** Never address the student directly.
+8. **DTW on full-length chroma is O(N*M).** Segment first, then align independently.
+9. **Whisper hallucinates on music audio.** VAD pre-processing strips music before Whisper. Also filter low-confidence segments.
+10. **Audio is stored on Railway local disk, not Supabase Storage.** Path: `./storage/audio/{lesson_id}.webm`. No cleanup implemented yet.
+11. **Groq Whisper prompt parameter limited to 224 tokens.** Build prompt dynamically, truncate at 800 chars.
+12. **VAD timestamp remapping is critical.** When music is stripped, Whisper timestamps are in trimmed-audio time. Must remap to real-lesson time before storing.
 
-2. **Demucs expects specific audio format.** Resample to 44100Hz stereo before feeding to Demucs, even though we record mono. Demucs outputs stereo; convert back to mono after separation.
+## Score Database — Practical Notes
 
-3. **librosa defaults to 22050Hz sample rate.** Be explicit about sr in every librosa call. Use sr=22050 consistently across the pipeline for chroma and pitch analysis.
+The starting repertoire plan focuses on public domain works available as MusicXML:
+- Standard classical violin concertos, etudes, sonatas from MuseScore/IMSLP
+- ~100-150 pieces realistically available on day one
+- Suzuki-specific arrangements are copyrighted (Alfred Music) — cannot be distributed, but the underlying pieces (Bach, Vivaldi, Handel) are public domain
+- Teachers can contribute via photo scan (OMR) or reference recording
+- The database grows through teacher contributions (flywheel effect)
 
-4. **DTW on full-length chroma is slow.** A 30-minute lesson produces ~35,000 chroma frames. DTW on the full matrix is O(N*M) in memory. Segment first, then align each segment independently against the reference. This is both faster and more accurate (handles the student playing sections out of order).
+**Graceful degradation when no score exists:**
+1. Community match (another teacher uploaded it)
+2. Photo scan via OMR (~90-95% accuracy)
+3. Teacher records a reference performance
+4. Manual section labels
+5. No reference — still tracks time, speech, tempo, repetitions
 
-5. **music21 is slow to parse large scores.** Cache parsed scores and pre-computed reference chromas on disk. Don't re-parse MusicXML on every lesson.
+## Phased Roadmap
 
-6. **Whisper can hallucinate on music audio.** Even after source separation, the speech track may contain instrument bleed. Whisper sometimes "transcribes" musical sounds as words. Filter transcript segments with low confidence or nonsensical content.
+### Phase 1 — Lesson Documentation (✅ Live)
+Record → transcribe → AI summary → copy to parent. Basic but functional.
 
-7. **Don't store raw audio longer than needed.** Process-and-delete is the default. Delete audio files from Supabase Storage after successful pipeline completion. Only structured data (timeline JSON, summaries) persists in the database.
+### Phase 1.5 — Transcription Accuracy (✅ Shipped)
+Whisper prompt injection, LLM transcription cleanup, timestamped segments, previous lesson context. Better summaries, no infrastructure changes.
+
+### Phase 1.75 — VAD + Audio Clips (🔜 Next)
+Silero VAD pre-processing for dramatically cleaner transcription. Audio clip segmentation and storage. Inline playback on summary page. Clip sharing with parents.
+
+### Phase 2 — Parent Portal
+Link-based parent view of lesson history and shared clips. No account needed. Teacher sends link once, parent bookmarks it.
+
+### Phase 3 — Music Intelligence
+Source separation, score alignment, tempo/pitch tracking. The Observations UX pattern. This is what differentiates Orpheus from generic meeting AI.
+
+### Phase 4 — Longitudinal Tracking
+Pre-lesson briefs, week-over-week comparisons, monthly progress reports, student record export as PDF.
+
+### Phase 5 — The Codex (Layer 1: Piece Library + Teaching Tips)
+Searchable piece library, teacher-contributed tips and resources, community upvoting. Auto-populated stats from lesson data.
+
+### Phase 6 — The Codex (Layer 2: Repertoire Graph + Technique Map)
+Track piece transitions across teachers. Technique dependency graph. "Other teachers assign these pieces next."
+
+### Phase 7 — The Codex (Layer 3: Teaching Insights + Marketplace)
+Instruction clustering from speech transcripts. Passage-specific teaching approach recommendations. Paid content marketplace for teacher-created resources.
+
+### Future — Student Practice Recording
+Same pipeline, different entry point. Parent opens portal, taps "Record Practice." Only viable after parent portal proves engagement.
+
+## Competitive Landscape
+
+**Closest competitor:** ForteAI (forteai.org) — claims lesson capture, student histories, scoring of timing/intonation/dynamics. Appears very early stage, unclear actual depth.
+
+**Adjacent products (solve fragments only):**
+- Studio management (My Music Staff, Fons) — scheduling/billing, manual notes
+- Online lessons (Forte Lessons) — video conferencing for music, no AI
+- Practice apps (Tonara, SmartMusic) — student-facing, not lesson documentation
+- Repertoire tools (Trinity NoteLab) — piece discovery, no recording
+- Generic AI (Otter.ai) — speech only, instruments are noise
+
+**Nobody does the full stack.** The Codex has no equivalent anywhere. That's the long-term moat.
+
+## Priority Queue
+
+| Priority | Feature | Effort (with Claude Code) | Status |
+|----------|---------|---------------------------|--------|
+| 1 | Transcription accuracy — Layer A (prompt improvements) | ~1 hour | ✅ Shipped |
+| 2 | Transcription accuracy — Layer B (Silero VAD) | 1-2 hours + testing | 🔜 Next |
+| 3 | Transcription accuracy — Layer C (validation) | 1 hour (manual listening) | After Layer B |
+| 4 | Audio clips (segment, store, playback) | Half day | After Upgrade 1 |
+| 5 | Parent portal (link-based, no account) | 1-2 hours | After clips |
+| 6 | The Codex v1 (piece library + teaching tips) | 1 day | After parent portal |
+| — | Full audio analysis pipeline (Demucs, DTW, pYIN) | Days | Phase 3 |
+| — | Observations UX pattern | Half day | After audio pipeline |
+| — | Codex data collection (auto from lessons) | 1-2 hours | After Codex v1 |
+| — | Teacher knowledge marketplace | Days | Much later |
+| — | Student practice recording | Hours (same pipeline) | After parent portal proves engagement |
+
+*Note: Effort estimates assume Claude Code handles implementation. Real bottleneck is prompt writing, testing with real recordings, and debugging deployment — not coding.*
 
 ## Reference: Full Blueprint
 
-The complete product blueprint with all business context, edge cases, UX details, and knowledge graph architecture is in `docs/orpheus-blueprint.md`. Read this for the full picture of why decisions were made and where the product is heading long-term.
+The complete product blueprint with all business context, edge cases, UX details, and knowledge graph architecture is in `orpheus-blueprint.md`. Read this for the full picture of why decisions were made and where the product is heading long-term.
