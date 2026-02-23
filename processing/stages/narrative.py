@@ -37,6 +37,10 @@ markings
 Use your musical knowledge to infer what was actually said. Generate summaries \
 using the corrected terms, not the raw transcription errors.
 
+The transcript includes timestamps. Use these to understand lesson structure \
+and pacing, such as how long was spent on each piece or activity. You don't \
+need to include timestamps in the summaries.
+
 TEACHER SUMMARY: Concise, specific, uses musical terminology where present in
 the transcript. Focus on what was covered, measurable progress, and areas
 needing attention. Suggest 2-3 specific practice assignments based on what the
@@ -127,7 +131,7 @@ def generate_summaries(
     user_message = (
         f"Student: {student_name}\n"
         f"Instrument: {instrument}{duration_str}\n\n"
-        f"Lesson transcript:\n{transcript}"
+        f"Timestamped lesson transcript:\n{transcript}"
     )
 
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()

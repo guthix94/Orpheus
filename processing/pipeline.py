@@ -37,6 +37,21 @@ _WHISPER_PROMPT_BASE = (
 _WHISPER_PROMPT_MAX_CHARS = 800
 
 
+def _format_timestamped_transcript(segments) -> str:
+    """Format transcript segments as a timestamped transcript string.
+
+    Each line looks like ``[M:SS] text`` or ``[MM:SS] text``.
+    """
+    lines: list[str] = []
+    for seg in segments:
+        start = seg.start if hasattr(seg, "start") else seg["start"]
+        text = seg.text if hasattr(seg, "text") else seg["text"]
+        minutes = int(start) // 60
+        seconds = int(start) % 60
+        lines.append(f"[{minutes}:{seconds:02d}] {text}")
+    return "\n".join(lines)
+
+
 def _build_whisper_prompt(student) -> str:
     """Build a Whisper prompt with domain vocabulary and student context."""
     parts = [_WHISPER_PROMPT_BASE]
@@ -132,6 +147,12 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             except Exception:
                 logger.exception("Pipeline[%s]: transcription failed", lesson_id)
 
+        # ---- Format timestamped transcript for narrative ----
+        if transcript_segments:
+            timestamped_transcript = _format_timestamped_transcript(transcript_segments)
+        else:
+            timestamped_transcript = transcript_text
+
         # ---- Stage 2: Narrative generation ----
         logger.info("Pipeline[%s]: starting narrative generation", lesson_id)
         narrative_duration = 0.0
@@ -140,7 +161,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
             t0 = time.time()
             narrative = generate_summaries(
-                transcript=transcript_text,
+                transcript=timestamped_transcript,
                 student_name=student_name,
                 instrument=instrument,
                 duration_seconds=lesson.duration_seconds,
