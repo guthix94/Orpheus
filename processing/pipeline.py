@@ -131,6 +131,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
         # ---- Stage 0: VAD Pre-processing ----
         vad_result = None
         vad_duration = 0.0
+        vad_status = "skipped"  # skipped | used | no_speech | failed | error
 
         if audio_path:
             from processing.stages.vad import run_vad
@@ -148,6 +149,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
                     if vad_result.speech_audio_path:
                         speech_audio_temp_path = vad_result.speech_audio_path
+                        vad_status = "used"
                         logger.info(
                             "Pipeline[%s]: VAD done in %.1fs — speech: %.1fs of %.1fs total",
                             lesson_id,
@@ -156,18 +158,25 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                             vad_result.original_duration_s,
                         )
                     else:
+                        vad_status = "no_speech"
                         logger.warning(
-                            "Pipeline[%s]: VAD found no speech — will send full audio to Whisper",
+                            "Pipeline[%s]: VAD found no speech (status=no_speech, %.1fs elapsed) "
+                            "— will send full audio to Whisper",
                             lesson_id,
+                            vad_duration,
                         )
                         vad_result = None
                 else:
+                    vad_status = "failed"
                     logger.warning(
-                        "Pipeline[%s]: VAD returned None — falling back to full audio",
+                        "Pipeline[%s]: VAD returned None (status=failed, %.1fs elapsed) "
+                        "— falling back to full audio",
                         lesson_id,
+                        vad_duration,
                     )
             except Exception:
                 logger.exception("Pipeline[%s]: VAD failed — falling back to full audio", lesson_id)
+                vad_status = "error"
                 vad_result = None
                 vad_duration = time.time() - t0
 
@@ -291,6 +300,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                 "whisper_model": "groq/whisper-large-v3",
                 "vad_seconds": round(vad_duration, 2),
                 "vad_used": vad_result is not None,
+                "vad_status": vad_status,
                 "transcription_seconds": round(transcription_duration, 2),
                 "narrative_seconds": round(narrative_duration, 2),
                 "total_seconds": round(time.time() - pipeline_start, 2),

@@ -102,10 +102,18 @@ def _convert_to_wav(audio_path: Path) -> Path:
         "-f", "wav",
         str(wav_path),
     ]
+    logger.debug("VAD: running ffmpeg — %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, timeout=120)
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")
         raise RuntimeError(f"ffmpeg conversion failed: {stderr[:500]}")
+
+    # Validate output
+    wav_size = wav_path.stat().st_size
+    logger.debug("VAD: ffmpeg output — %s (%d bytes)", wav_path, wav_size)
+    if wav_size < 44:  # WAV header is 44 bytes; anything less is empty
+        raise RuntimeError(f"ffmpeg produced empty/invalid WAV ({wav_size} bytes) for {audio_path}")
+
     return wav_path
 
 
@@ -129,6 +137,10 @@ def _load_audio(audio_path: Path) -> tuple:
             load_path = audio_path
 
         waveform, sr = torchaudio.load(str(load_path))
+        logger.debug(
+            "VAD: torchaudio.load — shape=%s, sr=%d, dtype=%s",
+            list(waveform.shape), sr, waveform.dtype,
+        )
 
         # Convert to mono if stereo
         if waveform.shape[0] > 1:
@@ -139,7 +151,22 @@ def _load_audio(audio_path: Path) -> tuple:
             resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=_VAD_SAMPLE_RATE)
             waveform = resampler(waveform)
 
-        return waveform.squeeze(0), _VAD_SAMPLE_RATE
+        result_waveform = waveform.squeeze(0)
+
+        # Log amplitude stats — critical for diagnosing "no speech detected"
+        rms = (result_waveform.float() ** 2).mean().sqrt().item()
+        logger.info(
+            "VAD: audio loaded — %d samples (%.1fs), min=%.4f, max=%.4f, rms=%.6f",
+            result_waveform.shape[0],
+            result_waveform.shape[0] / _VAD_SAMPLE_RATE,
+            result_waveform.min().item(),
+            result_waveform.max().item(),
+            rms,
+        )
+        if rms < 1e-6:
+            logger.warning("VAD: audio appears to be silence/empty (rms=%.8f)", rms)
+
+        return result_waveform, _VAD_SAMPLE_RATE
 
     finally:
         if wav_path and wav_path.exists():
@@ -365,6 +392,19 @@ def run_vad(audio_path: str | Path) -> VADResult | None:
             min_silence_duration_ms=100,
         )
 
+        logger.info(
+            "VAD: get_speech_timestamps returned %d raw segments", len(speech_timestamps)
+        )
+        if speech_timestamps:
+            for i, ts in enumerate(speech_timestamps[:5]):
+                logger.debug(
+                    "VAD:   raw segment %d: samples %d–%d (%.2f–%.2fs)",
+                    i, ts["start"], ts["end"],
+                    ts["start"] / sample_rate, ts["end"] / sample_rate,
+                )
+            if len(speech_timestamps) > 5:
+                logger.debug("VAD:   ... and %d more segments", len(speech_timestamps) - 5)
+
         if not speech_timestamps:
             logger.warning("VAD: no speech detected in audio")
             return VADResult(
@@ -384,10 +424,18 @@ def run_vad(audio_path: str | Path) -> VADResult | None:
         ]
 
         # Filter very short detections
+        pre_filter_count = len(raw_speech_segments)
         raw_speech_segments = [
             s for s in raw_speech_segments
             if (s.end - s.start) >= _MIN_SPEECH_DURATION_S
         ]
+        if pre_filter_count != len(raw_speech_segments):
+            logger.info(
+                "VAD: filtered %d/%d segments below %.0fms minimum duration",
+                pre_filter_count - len(raw_speech_segments),
+                pre_filter_count,
+                _MIN_SPEECH_DURATION_S * 1000,
+            )
 
         if not raw_speech_segments:
             logger.warning("VAD: all speech segments too short — no usable speech")
