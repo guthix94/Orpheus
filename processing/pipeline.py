@@ -24,6 +24,34 @@ from server.config import settings
 
 logger = logging.getLogger(__name__)
 
+_WHISPER_PROMPT_BASE = (
+    "This is a music lesson. Common terms: Vivaldi, Bach, Mozart, Beethoven, "
+    "Handel, Suzuki, Kreutzer, Wohlfahrt, Schradieck, spiccato, legato, "
+    "staccato, détaché, vibrato, pizzicato, arco, forte, piano, crescendo, "
+    "diminuendo, allegro, andante, adagio, measures, bars, tempo, metronome, "
+    "intonation, position, first position, third position, bow hold, "
+    "string crossing, scales, arpeggios, etude, concerto, sonata."
+)
+
+# Groq Whisper prompt limit is 224 tokens; keep well under that.
+_WHISPER_PROMPT_MAX_CHARS = 800
+
+
+def _build_whisper_prompt(student) -> str:
+    """Build a Whisper prompt with domain vocabulary and student context."""
+    parts = [_WHISPER_PROMPT_BASE]
+
+    if student is not None:
+        if student.current_pieces:
+            pieces_str = ", ".join(student.current_pieces)
+            parts.append(f"Pieces being studied: {pieces_str}.")
+        parts.append(f"Student name: {student.name}.")
+
+    prompt = " ".join(parts)
+    if len(prompt) > _WHISPER_PROMPT_MAX_CHARS:
+        prompt = prompt[:_WHISPER_PROMPT_MAX_CHARS].rsplit(" ", 1)[0]
+    return prompt
+
 
 def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
     """Execute the minimal speech-to-summary pipeline for a lesson.
@@ -76,6 +104,9 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             logger.warning("Pipeline: no audio_file_path on lesson %s — skipping transcription",
                            lesson_id)
 
+        # ---- Build Whisper prompt for transcription accuracy ----
+        whisper_prompt = _build_whisper_prompt(student)
+
         # ---- Stage 1: Transcription ----
         transcript_text = ""
         transcript_segments: list[dict] = []
@@ -86,7 +117,11 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
             logger.info("Pipeline[%s]: starting transcription", lesson_id)
             try:
-                result = transcribe(audio_path, api_key=settings.groq_api_key or None)
+                result = transcribe(
+                    audio_path,
+                    api_key=settings.groq_api_key or None,
+                    prompt=whisper_prompt,
+                )
                 transcript_text = result.full_text
                 transcript_segments = [asdict(s) for s in result.segments]
                 transcription_duration = result.duration_seconds
