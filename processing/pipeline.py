@@ -147,6 +147,43 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             except Exception:
                 logger.exception("Pipeline[%s]: transcription failed", lesson_id)
 
+        # ---- Query previous lesson for context ----
+        previous_lesson_context: str | None = None
+        try:
+            prev_lesson = session.execute(
+                select(Lesson)
+                .where(
+                    Lesson.student_id == lesson.student_id,
+                    Lesson.status == "completed",
+                    Lesson.id != lesson_id,
+                )
+                .order_by(Lesson.started_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if prev_lesson is not None:
+                date_str = prev_lesson.started_at.strftime("%B %d, %Y")
+                assignments_text = "None"
+                if prev_lesson.suggested_assignments:
+                    assignment_lines = []
+                    for a in prev_lesson.suggested_assignments:
+                        desc = a.get("description", "")
+                        details = a.get("details", "")
+                        line = f"- {desc}"
+                        if details:
+                            line += f": {details}"
+                        assignment_lines.append(line)
+                    assignments_text = "\n".join(assignment_lines)
+
+                previous_lesson_context = (
+                    f"Previous lesson ({date_str}):\n"
+                    f"Summary: {prev_lesson.teacher_summary}\n"
+                    f"Assignments given:\n{assignments_text}"
+                )
+                logger.info("Pipeline[%s]: found previous lesson from %s", lesson_id, date_str)
+        except Exception:
+            logger.exception("Pipeline[%s]: failed to query previous lesson", lesson_id)
+
         # ---- Format timestamped transcript for narrative ----
         if transcript_segments:
             timestamped_transcript = _format_timestamped_transcript(transcript_segments)
@@ -166,6 +203,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                 instrument=instrument,
                 duration_seconds=lesson.duration_seconds,
                 summary_style=lesson.summary_style,
+                previous_lesson_context=previous_lesson_context,
                 api_key=settings.anthropic_api_key or None,
             )
             narrative_duration = time.time() - t0

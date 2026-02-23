@@ -41,6 +41,12 @@ The transcript includes timestamps. Use these to understand lesson structure \
 and pacing, such as how long was spent on each piece or activity. You don't \
 need to include timestamps in the summaries.
 
+If a previous lesson summary is provided, use it for context. Note any \
+continuity — whether assigned pieces were revisited, whether previously noted \
+areas received attention. Don't force comparisons if the current lesson covers \
+entirely different material. If no previous lesson is provided, this is a new \
+student — skip any references to prior lessons.
+
 TEACHER SUMMARY: Concise, specific, uses musical terminology where present in
 the transcript. Focus on what was covered, measurable progress, and areas
 needing attention. Suggest 2-3 specific practice assignments based on what the
@@ -90,6 +96,7 @@ def generate_summaries(
     instrument: str = "violin",
     duration_seconds: int | None = None,
     summary_style: str = "standard",
+    previous_lesson_context: str | None = None,
     api_key: str | None = None,
 ) -> NarrativeResult:
     """Send the lesson transcript to Claude and parse the structured response.
@@ -106,6 +113,9 @@ def generate_summaries(
         Lesson duration in seconds, if known.
     summary_style:
         "standard" or "formal".
+    previous_lesson_context:
+        Formatted summary + assignments from the student's most recent
+        completed lesson, or *None* if this is their first lesson.
     api_key:
         Anthropic API key. If *None*, the client reads ANTHROPIC_API_KEY env var.
     """
@@ -128,9 +138,14 @@ def generate_summaries(
         mins = duration_seconds // 60
         duration_str = f"\nLesson duration: {mins} minutes"
 
+    prev_context_block = ""
+    if previous_lesson_context:
+        prev_context_block = f"\n{previous_lesson_context}\n"
+
     user_message = (
         f"Student: {student_name}\n"
-        f"Instrument: {instrument}{duration_str}\n\n"
+        f"Instrument: {instrument}{duration_str}\n"
+        f"{prev_context_block}\n"
         f"Timestamped lesson transcript:\n{transcript}"
     )
 
