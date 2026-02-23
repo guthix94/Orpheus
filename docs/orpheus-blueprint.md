@@ -2,7 +2,7 @@
 
 ## The Intelligent Lesson Documentation System for Music Educators
 
-*Version 1.3 — February 2026*
+*Version 1.4 — February 2026*
 
 ---
 
@@ -92,6 +92,17 @@ By shifting the product to the lesson itself, both barriers dissolve:
 
 The tradeoff is losing day-by-day practice visibility. But the lesson-centered model still captures the most important data — what the student can do each week — and infers practice patterns from the delta between lessons. Over time, if the product proves valuable enough, students may opt into practice recording voluntarily. But the core product doesn't depend on it.
 
+### Reopening the Door: Practice Recording via the Parent Portal
+
+Once the lesson-centered product is established and the Parent Portal exists (see Section 4), the adoption barriers that killed the practice-recording concept may dissolve. Here's why:
+
+- **The parent is already engaged.** They're checking lesson summaries and practice assignments on the portal. Adding a "Record Practice" button is a natural extension, not a new behavior.
+- **The teacher has already assigned specific goals.** The parent sees "practice string crossings mm. 45-62 at ♩=72." Context makes the recording purposeful, not open-ended.
+- **The same audio pipeline processes the recording.** No new infrastructure — just a different entry point into the existing system.
+- **It's opt-in, not required.** The core product works without it. Practice recording is a bonus for engaged families.
+
+The key insight: practice recording failed as a standalone product but may succeed as a feature of an established ecosystem. The lesson-centered product builds the relationship; practice recording extends it. This is worth revisiting once the Parent Portal proves that parents actively engage.
+
 ---
 
 ## 4. Core Value Propositions
@@ -112,11 +123,13 @@ The tradeoff is losing day-by-day practice visibility. But the lesson-centered m
 
 ### For Parents
 
-**Weekly lesson updates.** A clear, warm, non-technical message after each lesson explaining what was covered and what to encourage at home. No app download required — delivered via email or SMS.
+**The Parent Portal.** A single bookmarkable link — no app download, no account creation, no login. The teacher sends the link once; the parent opens it anytime to see a running record of their child's musical journey. Each lesson appears with a warm summary, practice assignments, and optionally audio clips of their child playing. Parents finally have visibility into what's happening in lessons without adding any burden to the teacher.
+
+**Audio clips from lessons.** Parents don't just read about progress — they hear it. Teachers can share short audio clips from lessons: "Here's Sofia playing through the Vivaldi today." For non-musical parents who can't judge progress from text, hearing their child play is the most meaningful proof of improvement.
+
+**Actionable practice guidance.** Instead of the useless "did you practice?", parents can say "have you done your run-through today?" because they can see exactly what was assigned on the portal.
 
 **Monthly progress reports.** Data-backed summaries of their child's development, specific enough to be meaningful, encouraging enough to be motivating.
-
-**Actionable practice guidance.** Instead of the useless "did you practice?", parents can say "have you done your run-through today?" because they know what was assigned.
 
 ### For Students (Indirect)
 
@@ -161,13 +174,15 @@ The teacher sees a structured summary:
 
 The teacher scans it in 10-15 seconds, optionally tweaks one assignment, taps confirm. Done.
 
-**Optional: parent communication.** Teacher taps "Send to parent," enters email (remembered for next time), previews the parent-friendly version of the summary, sends. The parent receives a warm, specific, non-technical update about their child's lesson — no app download required.
+**Optional: parent communication.** Two options: (1) Teacher taps "Copy Message," previews the parent-friendly summary, copies it to paste into WhatsApp/Telegram/iMessage. (2) If the Parent Portal is set up for this student, the teacher taps "Approve" and the summary automatically appears on the parent's bookmarked portal page — zero effort after initial setup. The teacher can also select audio clips from the lesson to share: "Here's a clip of Sofia playing through the Vivaldi today. 🎵 [Listen →]"
 
 ### Phase 3: First Week (Building the Habit)
 
 By the second lesson with any student, the system shows a **pre-lesson brief** — last week's summary, what was assigned, key issues to follow up on. The teacher glances at it for 5 seconds before starting. They no longer ask "so what were we working on?"
 
 Summaries now include **week-over-week comparisons**: "String crossings at ♩=78 today, up from ♩=70 last week (+11%)."
+
+**Audio clips** appear inline with the summary. The teacher taps 🔊 to hear a specific moment — the student's best run-through, a tricky passage, a moment of breakthrough. No scrubbing through 30 minutes of audio. By Thursday, the teacher can't remember what Monday's student sounded like — but now they can hear it in two taps.
 
 ### Phase 4: First Month (The Product Gets Smarter)
 
@@ -1185,76 +1200,73 @@ The comparison isn't other music apps — it's the combination of tools teachers
 
 **Do music teachers check an auto-generated lesson summary before their next lesson?** If yes, the product is working. If no, we need to understand why before building anything else.
 
-### MVP Feature Set
+### What Actually Shipped (Phase 1 — Live)
 
-**Include:**
-- Audio recording during lessons (phone mic)
-- Source separation (speech + instrument)
-- Speech transcription and piece identification
-- Score alignment for pieces in the initial database
-- Basic tempo tracking per section
-- Repetition counting
-- Auto-generated teacher summary (standard + formal documentation mode)
-- Auto-generated parent message (one-tap send)
-- **Parent communication log with delivery timestamps and confirmation**
-- **Assignment tracking with status updates (achieved/partial/not attempted)**
-- **Lesson confirmation flow — locks summary as immutable record**
-- **Student record export as PDF (filterable by date range)**
-- Pre-lesson brief showing last week's summary
-- Student list with basic history
+The MVP launched leaner than originally planned — transcript-only processing without source separation or score alignment. This was the right call: it validated the core hypothesis faster and with less infrastructure complexity.
 
-**Exclude (add later):**
-- Intonation analysis and pattern detection
-- Practice behavior classification
-- LLM-generated practice assignments (manual for MVP)
-- OMR sheet music scanning
-- Reference recording alignment
-- Attendance analytics dashboard (Phase 2)
-- Repertoire Graph recommendations (Phase 4 — The Codex)
-- Group lesson mode
-- Multiple teacher per student support
-- Monthly progress reports (manual for MVP)
+**What's live:**
+- Audio recording during lessons (browser-based, phone mic, music-optimized settings)
+- Speech transcription via Groq (Whisper large-v3) with music vocabulary prompt injection
+- LLM narrative generation (Claude Haiku 4.5) with transcription cleanup, timestamped segments, and previous lesson context
+- Auto-generated teacher summary
+- Auto-generated parent message (copy-to-clipboard for WhatsApp/Telegram/iMessage)
+- Auto-generated practice assignments
+- Student management with data isolation per teacher
+- Dashboard with studio overview
+- Email/password auth via Supabase
+
+**What was deferred from original MVP plan:**
+- Source separation, score alignment, tempo tracking — moved to Phase 3 (Music Intelligence)
+- Formal documentation mode — planned but not yet implemented
+- Parent communication log with delivery confirmation — replaced by copy-to-clipboard + Parent Portal concept
+- Assignment tracking with status updates — not yet implemented
+- Lesson confirmation flow / immutability — not yet implemented
+- Student record export as PDF — not yet implemented
+- Pre-lesson brief — partially addressed by passing previous lesson context to LLM
+
+**What was added that wasn't in the original plan:**
+- Whisper prompt injection with dynamic student context (music vocabulary + known pieces)
+- Timestamped transcript segments passed to LLM for pacing awareness
+- Previous lesson context for continuity between sessions
+- LLM-based transcription error correction for musical terminology
+- Parent Portal concept (link-based, no account needed — replaces email/SMS delivery)
+- Audio clip segmentation and sharing (for both teacher review and parent delivery)
 
 ### Initial Scope Constraints
 
-- **One instrument family:** Violin (monophonic, well-studied, huge private lesson market, Suzuki repertoire is widely available in MusicXML)
-- **Score database:** Suzuki violin repertoire (Books 1-10, ~240 pieces) + standard classical violin concertos and etudes (~500 additional pieces)
-- **Platform:** Web-first (mobile-responsive Next.js app, works on phone browsers — no native app needed for pilot)
+- **Instrument:** Not constrained to violin — works for any instrument since Phase 1 is transcript-only
+- **Score database:** Not needed for Phase 1 (no score alignment yet)
+- **Platform:** Web-first (mobile-responsive Next.js app on Vercel, FastAPI backend on Railway, Supabase PostgreSQL)
 
-### Pilot Design
+### Pilot Status
 
-**10 violin teachers, 4 weeks:**
-- Week 1: Onboard, record 3-4 lessons each, gather first impressions
-- Week 2: Iterate on summary quality based on feedback, check if teachers reference summaries before lessons
-- Week 3: Enable parent communications, gather parent feedback
-- Week 4: Exit interviews — what's valuable, what's missing, what would make them pay
+**Currently in pilot with 2 teachers.** Iterating on summary quality and gathering feedback on accuracy, usefulness, and parent communication workflow.
 
-**Key metrics:**
-- Summary review rate (do teachers look at it before the next lesson?)
+**Key metrics being tracked:**
 - Summary accuracy (do teachers need to correct it frequently?)
 - Time-to-value (how quickly does the teacher see the benefit?)
-- Parent engagement (do parents read the messages? do they respond?)
+- Parent engagement (do parents use the copy-to-clipboard messages?)
 - Retention intent ("would you keep using this? would you pay?")
 
-### Success Criteria
+### Updated Roadmap
 
-The pilot succeeds if:
-- 7+ of 10 teachers check summaries before most lessons by week 3
-- Summary accuracy requires minimal correction (< 2 edits per summary on average)
-- At least 5 teachers express willingness to pay
-- At least 3 teachers independently send parent communications
+**Phase 1.5 (✅ Shipped):** Transcription accuracy improvements — Whisper prompt injection, LLM transcription cleanup, timestamped segments, previous lesson context.
 
-### Post-Pilot Roadmap
+**Phase 1.75 (🔜 Next):** Silero VAD pre-processing (strip music before Whisper for dramatically cleaner transcription). Audio clip segmentation, storage, and inline playback. Clip sharing with parents.
 
-**Phase 2 (Months 2-4):** Add intonation analysis, practice assignment generation, OMR scanning, expand to piano. Begin silently accumulating data for The Codex (repertoire transitions, technique associations).
+**Phase 2:** Parent Portal — link-based parent view of lesson history and shared clips. No account needed. Teacher sends link once, parent bookmarks it.
 
-**Phase 3 (Months 4-8):** Monthly progress reports, reference recording alignment, expand instrument support, Android version. Launch Codex Layer 1: Repertoire Graph — "other teachers assign these pieces next."
+**Phase 3:** Music Intelligence — source separation (Demucs), score alignment (DTW), tempo/pitch tracking. The Observations UX pattern. This is what differentiates Orpheus from generic meeting AI.
 
-**Phase 4 (Months 8-12):** Codex Layer 2: Technique Map — technique-aware repertoire recommendations. Group lesson mode. Begin instruction clustering pipeline for Codex Layer 3.
+**Phase 4:** Longitudinal Tracking — pre-lesson briefs, week-over-week comparisons with musical data, monthly progress reports, student record export as PDF.
 
-**Phase 5 (Year 2):** Codex Layer 3: Teaching Insights — passage-specific teaching approach recommendations with effectiveness data. Teaching Copilot features. Searchable Codex knowledge base.
+**Phase 5:** The Codex Layer 1 — searchable piece library with teacher-contributed tips and resources. Auto-populated stats from lesson data. Community upvoting.
 
-**Phase 6 (Year 2-3):** Institutional analytics dashboards powered by The Codex. Publisher data partnerships. Research data licensing. Evidence-based pedagogy publications. API for third-party studio management tools.
+**Phase 6:** The Codex Layer 2 — Repertoire Graph + Technique Map. Track piece transitions across teachers. Technique-aware recommendations.
+
+**Phase 7:** The Codex Layer 3 — Teaching Insights + Knowledge Marketplace. Instruction clustering, passage-specific teaching approach recommendations. Paid content marketplace for teacher-created resources.
+
+**Phase 8:** Institutional analytics, publisher data partnerships, research data licensing. Student practice recording via Parent Portal (if parent engagement validates the concept).
 
 ---
 
@@ -1372,6 +1384,11 @@ struggled, failed, couldn't, wrong, mistake, problem, weak, poor, bad, behind, s
 2. Describe what was worked on (process, not evaluation)
 3. Give one concrete, actionable thing the parent can encourage at home
 4. End with recommended daily practice duration
+
+### Delivery Methods
+1. **Copy-to-clipboard (current):** Teacher copies parent message, pastes into WhatsApp/Telegram/iMessage
+2. **Parent Portal (planned):** Teacher approves summary, it appears automatically on the parent's bookmarked portal page. Teacher can attach audio clips. Parent checks at their convenience — no push notification, no app download, no account.
+3. **Audio clips (planned):** Teacher selects specific clips from the lesson to share with parents. Clips play inline on the portal or via a shareable link. "Here's a clip of Sofia playing through the Vivaldi today. 🎵"
 
 ---
 
