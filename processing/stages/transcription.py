@@ -33,33 +33,42 @@ def transcribe(
     audio_path: str | Path,
     api_key: str | None = None,
     prompt: str | None = None,
+    audio_file_override: str | Path | None = None,
 ) -> TranscriptionResult:
     """Transcribe *audio_path* using the Groq Whisper API.
 
     Parameters
     ----------
     audio_path:
-        Path to the audio file (wav, webm, mp3, etc.).
+        Path to the original audio file (used for logging and as fallback).
     api_key:
         Groq API key.  If *None*, the client reads the ``GROQ_API_KEY``
         environment variable.
     prompt:
         Optional prompt to guide Whisper transcription (e.g. domain-specific
         vocabulary).  Groq's limit is 224 tokens.
+    audio_file_override:
+        Optional path to a pre-processed audio file (e.g. speech-only from
+        VAD).  If provided, this file is sent to Whisper instead of
+        *audio_path*.
     """
     from groq import Groq
 
     audio_path = Path(audio_path)
-    if not audio_path.exists():
-        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+    actual_path = Path(audio_file_override) if audio_file_override else audio_path
+    if not actual_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {actual_path}")
 
     client = Groq(api_key=api_key) if api_key else Groq()
 
-    logger.info("Transcribing %s via Groq whisper-large-v3", audio_path)
+    if audio_file_override:
+        logger.info("Transcribing %s (VAD speech-only override) via Groq whisper-large-v3", actual_path)
+    else:
+        logger.info("Transcribing %s via Groq whisper-large-v3", audio_path)
     t0 = time.time()
 
     create_kwargs: dict = dict(
-        file=(audio_path.name, audio_file_handle := open(audio_path, "rb")),
+        file=(actual_path.name, audio_file_handle := open(actual_path, "rb")),
         model="whisper-large-v3",
         response_format="verbose_json",
     )

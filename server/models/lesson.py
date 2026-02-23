@@ -40,6 +40,10 @@ class Lesson(Base):
     suggested_assignments: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     processing_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # VAD (Voice Activity Detection) segments — populated by Silero VAD pre-processing
+    # Format: [{"start": 0.0, "end": 3.2, "type": "speech"}, ...]
+    vad_segments: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+
     # Immutability
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

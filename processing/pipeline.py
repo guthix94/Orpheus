@@ -1,18 +1,21 @@
 """Main pipeline orchestrator — runs all processing stages in order.
 
-MVP pipeline (speech-to-summary):
-  1. Whisper transcription
-  2. Claude narrative generation
-  3. Persist results to the lesson row
+Pipeline (speech-to-summary with VAD pre-processing):
+  0. Silero VAD — classify audio as speech/music/silence, extract speech-only
+  1. Whisper transcription (on speech-only audio when VAD succeeds)
+  2. Timestamp remapping (speech-only time → real lesson time)
+  3. Claude narrative generation
+  4. Persist results to the lesson row
 
 Runs synchronously in a background thread so it doesn't block the API
-response.  Heavy ML stages (Whisper) are CPU-bound; the Claude API call
+response.  Heavy ML stages (VAD, Whisper) are CPU-bound; the Claude API call
 is IO-bound — both are fine in a thread for MVP throughput.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from dataclasses import asdict
@@ -69,7 +72,7 @@ def _build_whisper_prompt(student) -> str:
 
 
 def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
-    """Execute the minimal speech-to-summary pipeline for a lesson.
+    """Execute the speech-to-summary pipeline for a lesson.
 
     This is the top-level entry point called from the background task.
     It uses a **synchronous** SQLAlchemy session so it can run in a plain
@@ -97,6 +100,9 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
     session: Session = SessionLocal()
     pipeline_start = time.time()
 
+    # Track temp file for cleanup
+    speech_audio_temp_path: str | None = None
+
     try:
         # ---- Load lesson + student ----
         lesson = session.execute(
@@ -122,6 +128,49 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
         # ---- Build Whisper prompt for transcription accuracy ----
         whisper_prompt = _build_whisper_prompt(student)
 
+        # ---- Stage 0: VAD Pre-processing ----
+        vad_result = None
+        vad_duration = 0.0
+
+        if audio_path:
+            from processing.stages.vad import run_vad
+
+            logger.info("Pipeline[%s]: starting VAD pre-processing", lesson_id)
+            t0 = time.time()
+            try:
+                vad_result = run_vad(audio_path)
+                vad_duration = time.time() - t0
+
+                if vad_result is not None:
+                    # Store VAD segments on the lesson record
+                    lesson.vad_segments = [s.to_dict() for s in vad_result.segments]
+                    session.commit()
+
+                    if vad_result.speech_audio_path:
+                        speech_audio_temp_path = vad_result.speech_audio_path
+                        logger.info(
+                            "Pipeline[%s]: VAD done in %.1fs — speech: %.1fs of %.1fs total",
+                            lesson_id,
+                            vad_duration,
+                            vad_result.speech_duration_s,
+                            vad_result.original_duration_s,
+                        )
+                    else:
+                        logger.warning(
+                            "Pipeline[%s]: VAD found no speech — will send full audio to Whisper",
+                            lesson_id,
+                        )
+                        vad_result = None
+                else:
+                    logger.warning(
+                        "Pipeline[%s]: VAD returned None — falling back to full audio",
+                        lesson_id,
+                    )
+            except Exception:
+                logger.exception("Pipeline[%s]: VAD failed — falling back to full audio", lesson_id)
+                vad_result = None
+                vad_duration = time.time() - t0
+
         # ---- Stage 1: Transcription ----
         transcript_text = ""
         transcript_segments: list[dict] = []
@@ -136,6 +185,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                     audio_path,
                     api_key=settings.groq_api_key or None,
                     prompt=whisper_prompt,
+                    audio_file_override=speech_audio_temp_path,
                 )
                 transcript_text = result.full_text
                 transcript_segments = [asdict(s) for s in result.segments]
@@ -146,6 +196,21 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                 logger.warning("Pipeline[%s]: audio file not found at %s", lesson_id, audio_path)
             except Exception:
                 logger.exception("Pipeline[%s]: transcription failed", lesson_id)
+
+        # ---- Stage 1.5: Timestamp remapping ----
+        # When VAD was used, Whisper timestamps are in speech-only audio time.
+        # Remap them back to real lesson time.
+        if vad_result is not None and vad_result.timestamp_mappings and transcript_segments:
+            from processing.stages.vad import remap_transcript_segments
+
+            logger.info(
+                "Pipeline[%s]: remapping %d transcript segments to real lesson time",
+                lesson_id,
+                len(transcript_segments),
+            )
+            transcript_segments = remap_transcript_segments(
+                transcript_segments, vad_result.timestamp_mappings
+            )
 
         # ---- Query previous lesson for context ----
         previous_lesson_context: str | None = None
@@ -219,21 +284,31 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             lesson.timeline_json = {
                 "transcript_segments": transcript_segments,
             }
-            lesson.processing_metadata = {
-                "pipeline_version": "mvp-speech-to-summary",
+
+            # Build processing metadata
+            metadata: dict = {
+                "pipeline_version": "vad-speech-to-summary",
                 "whisper_model": "groq/whisper-large-v3",
+                "vad_seconds": round(vad_duration, 2),
+                "vad_used": vad_result is not None,
                 "transcription_seconds": round(transcription_duration, 2),
                 "narrative_seconds": round(narrative_duration, 2),
                 "total_seconds": round(time.time() - pipeline_start, 2),
                 "transcript_length": len(transcript_text),
             }
+            if vad_result is not None:
+                metadata["vad_speech_duration_s"] = round(vad_result.speech_duration_s, 2)
+                metadata["vad_original_duration_s"] = round(vad_result.original_duration_s, 2)
+                metadata["vad_segment_count"] = len(vad_result.segments)
+
+            lesson.processing_metadata = metadata
             lesson.status = "completed"
 
         except Exception:
             logger.exception("Pipeline[%s]: narrative generation failed", lesson_id)
             lesson.status = "failed"
             lesson.processing_metadata = {
-                "pipeline_version": "mvp-speech-to-summary",
+                "pipeline_version": "vad-speech-to-summary",
                 "error": "narrative_generation_failed",
                 "total_seconds": round(time.time() - pipeline_start, 2),
             }
@@ -255,5 +330,13 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
         except Exception:
             logger.exception("Pipeline[%s]: failed to mark lesson as failed", lesson_id)
     finally:
+        # Clean up temp speech-only audio file
+        if speech_audio_temp_path:
+            try:
+                os.unlink(speech_audio_temp_path)
+                logger.debug("Pipeline[%s]: cleaned up temp file %s", lesson_id, speech_audio_temp_path)
+            except OSError:
+                logger.warning("Pipeline[%s]: failed to clean up temp file %s",
+                               lesson_id, speech_audio_temp_path)
         session.close()
         engine.dispose()
