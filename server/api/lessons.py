@@ -147,12 +147,15 @@ async def get_lesson(
 @router.get("", response_model=list[LessonResponse])
 async def list_lessons(
     student_id: uuid.UUID | None = None,
+    lesson_status: str | None = None,
     user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Lesson]:
     query = select(Lesson).where(Lesson.teacher_id == user.id)
     if student_id is not None:
         query = query.where(Lesson.student_id == student_id)
+    if lesson_status is not None:
+        query = query.where(Lesson.status == lesson_status)
     query = query.order_by(Lesson.started_at.desc())
     result = await db.execute(query)
     return list(result.scalars().all())
@@ -287,4 +290,93 @@ async def delete_lesson_assignment(
 
     await db.commit()
     await db.refresh(lesson)
+    return lesson
+
+
+# ── Orphaned lesson recovery ──
+
+
+@router.post("/{lesson_id}/cancel", response_model=LessonResponse)
+async def cancel_lesson(
+    lesson_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    """Cancel/discard an orphaned lesson stuck in 'recording' status."""
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+    if lesson.status not in ("recording", "failed"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot cancel lesson with status '{lesson.status}'",
+        )
+
+    now = datetime.now(timezone.utc)
+    lesson.status = "cancelled"
+    lesson.ended_at = lesson.ended_at or now
+    lesson.duration_seconds = lesson.duration_seconds or int(
+        (now - lesson.started_at).total_seconds()
+    )
+
+    await db.commit()
+    await db.refresh(lesson)
+    logger.info("Lesson %s cancelled (was orphaned in 'recording' status)", lesson.id)
+    return lesson
+
+
+@router.post("/{lesson_id}/recover", response_model=LessonResponse)
+async def recover_lesson(
+    lesson_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    """Attempt to recover an orphaned lesson — process whatever audio exists."""
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+    if lesson.status != "recording":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot recover lesson with status '{lesson.status}'",
+        )
+
+    now = datetime.now(timezone.utc)
+    lesson.ended_at = now
+    lesson.duration_seconds = int((now - lesson.started_at).total_seconds())
+
+    # Check if audio file exists on disk
+    if lesson.audio_file_path and Path(lesson.audio_file_path).exists():
+        lesson.status = "processing"
+        await db.commit()
+        await db.refresh(lesson)
+
+        from processing.pipeline import run_pipeline
+
+        logger.info("Recovering lesson %s — audio found, starting pipeline", lesson.id)
+        background_tasks.add_task(run_pipeline, lesson.id, settings.database_url)
+    else:
+        # No audio file — mark as failed
+        lesson.status = "failed"
+        lesson.processing_metadata = {
+            "error": "No audio file found — recording was lost when the browser tab was closed.",
+            "recovered_at": now.isoformat(),
+        }
+        await db.commit()
+        await db.refresh(lesson)
+        logger.info("Lesson %s recovery failed — no audio file on disk", lesson.id)
+
     return lesson

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Users, Music, Clock, Mic } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Users, Music, Clock, Mic, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/api";
 import FadeIn from "@/components/ui/FadeIn";
 import QuickStatCard, {
@@ -24,9 +25,20 @@ interface Lesson {
   started_at: string;
   ended_at?: string;
   duration_seconds?: number;
-  status: "recording" | "processing" | "completed" | "failed";
+  status: "recording" | "processing" | "completed" | "failed" | "cancelled";
   pieces_detected?: string[];
   teacher_summary?: string;
+}
+
+/* ── Orphaned lesson recovery types ── */
+
+const ACTIVE_LESSON_KEY = "orpheus_active_lesson";
+
+interface OrphanedLesson {
+  id: string;
+  student_id: string;
+  started_at: string;
+  studentName: string;
 }
 
 /* ── Helpers ── */
@@ -72,10 +84,13 @@ function studentNameMap(students: Student[]): Record<string, string> {
 /* ── Page ── */
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [students, setStudents] = useState<Student[]>([]);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [orphanedLessons, setOrphanedLessons] = useState<OrphanedLesson[]>([]);
+  const [recoveringId, setRecoveringId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +103,27 @@ export default function DashboardPage() {
         if (!cancelled) {
           setStudents(stu);
           setLessons(les);
+
+          // ── Layer 3: Detect orphaned lessons stuck in "recording" ──
+          const nameMap = studentNameMap(stu);
+          const orphans = les
+            .filter((l) => l.status === "recording")
+            .map((l) => ({
+              id: l.id,
+              student_id: l.student_id,
+              started_at: l.started_at,
+              studentName: nameMap[l.student_id] ?? "Unknown",
+            }));
+          setOrphanedLessons(orphans);
+
+          // Clear sessionStorage hint if we found the orphan via API
+          if (orphans.length > 0) {
+            try {
+              sessionStorage.removeItem(ACTIVE_LESSON_KEY);
+            } catch {
+              // Ignore
+            }
+          }
         }
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
@@ -100,12 +136,72 @@ export default function DashboardPage() {
     };
   }, []);
 
+  const handleDiscardLesson = useCallback(
+    async (lessonId: string) => {
+      setRecoveringId(lessonId);
+      try {
+        await api(`/api/lessons/${lessonId}/cancel`, { method: "POST" });
+        setOrphanedLessons((prev) => prev.filter((l) => l.id !== lessonId));
+        // Update the lesson in the list
+        setLessons((prev) =>
+          prev.map((l) =>
+            l.id === lessonId ? { ...l, status: "cancelled" as const } : l,
+          ),
+        );
+      } catch {
+        // Silently fail — lesson may already have been cleaned up
+        setOrphanedLessons((prev) => prev.filter((l) => l.id !== lessonId));
+      } finally {
+        setRecoveringId(null);
+      }
+    },
+    [],
+  );
+
+  const handleRecoverLesson = useCallback(
+    async (lessonId: string) => {
+      setRecoveringId(lessonId);
+      try {
+        const lesson = await api<Lesson>(`/api/lessons/${lessonId}/recover`, {
+          method: "POST",
+        });
+        setOrphanedLessons((prev) => prev.filter((l) => l.id !== lessonId));
+        // If it went to processing, navigate to the processing page
+        if (lesson.status === "processing") {
+          router.push(`/lesson/${lessonId}/processing`);
+        } else {
+          // Update the lesson in the list (status is now "failed")
+          setLessons((prev) =>
+            prev.map((l) => (l.id === lessonId ? { ...l, status: lesson.status } : l)),
+          );
+        }
+      } catch {
+        setOrphanedLessons((prev) => prev.filter((l) => l.id !== lessonId));
+      } finally {
+        setRecoveringId(null);
+      }
+    },
+    [router],
+  );
+
   const names = studentNameMap(students);
   const recentLessons = lessons.slice(0, 5);
   const mostRecent = recentLessons[0] ?? null;
 
   return (
     <div className="space-y-8">
+      {/* ── Layer 3: Orphaned lesson recovery banner ── */}
+      {orphanedLessons.map((orphan) => (
+        <FadeIn key={orphan.id}>
+          <OrphanedLessonBanner
+            orphan={orphan}
+            recovering={recoveringId === orphan.id}
+            onDiscard={() => handleDiscardLesson(orphan.id)}
+            onRecover={() => handleRecoverLesson(orphan.id)}
+          />
+        </FadeIn>
+      ))}
+
       {/* ── Greeting ── */}
       <FadeIn>
         <p className="text-sm font-medium text-stone">{greeting()}</p>
@@ -314,6 +410,66 @@ function EmptyState() {
         <Mic size={16} className="text-amber" />
         Start Lesson
       </Link>
+    </div>
+  );
+}
+
+/* ── Orphaned Lesson Recovery Banner ── */
+
+function OrphanedLessonBanner({
+  orphan,
+  recovering,
+  onDiscard,
+  onRecover,
+}: {
+  orphan: OrphanedLesson;
+  recovering: boolean;
+  onDiscard: () => void;
+  onRecover: () => void;
+}) {
+  const startedAt = new Date(orphan.started_at);
+  const timeStr = startedAt.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const dateStr = startedAt.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+
+  return (
+    <div className="rounded-[var(--radius-card)] border border-amber/40 bg-amber-glow p-4 shadow-card">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber/20">
+          <AlertTriangle size={16} className="text-amber" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-serif text-base font-semibold text-charcoal">
+            Unfinished lesson with {orphan.studentName}
+          </p>
+          <p className="mt-0.5 text-sm text-stone">
+            Started {dateStr} at {timeStr}. The recording may have been
+            interrupted.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={onRecover}
+              disabled={recovering}
+              className="rounded-[var(--radius-button)] bg-charcoal px-4 py-2 text-sm font-semibold text-white transition-shadow hover:shadow-card-hover disabled:opacity-50"
+            >
+              {recovering ? "Processing..." : "Try to recover"}
+            </button>
+            <button
+              onClick={onDiscard}
+              disabled={recovering}
+              className="rounded-[var(--radius-button)] border border-sand bg-warm-white px-4 py-2 text-sm font-medium text-stone transition-colors hover:text-charcoal disabled:opacity-50"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

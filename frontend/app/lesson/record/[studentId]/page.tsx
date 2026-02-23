@@ -16,6 +16,16 @@ interface Lesson {
   id: string;
 }
 
+/* ── Session storage key for orphaned lesson recovery ── */
+const ACTIVE_LESSON_KEY = "orpheus_active_lesson";
+
+interface ActiveLessonInfo {
+  lessonId: string;
+  studentId: string;
+  studentName: string;
+  startedAt: string;
+}
+
 /* ── Page ── */
 
 export default function ActiveRecordingPage() {
@@ -32,6 +42,113 @@ export default function ActiveRecordingPage() {
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const lessonIdRef = useRef<string | null>(null);
+  const stoppingRef = useRef(false);
+
+  // Keep lessonId ref in sync for use in event handlers
+  useEffect(() => {
+    lessonIdRef.current = lessonId;
+  }, [lessonId]);
+
+  useEffect(() => {
+    stoppingRef.current = stopping;
+  }, [stopping]);
+
+  // ── Layer 1: Wake Lock ──
+  // Keeps screen on (dimmed) so the browser tab stays alive during recording
+  const requestWakeLock = useCallback(async () => {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      const lock = await navigator.wakeLock.request("screen");
+      wakeLockRef.current = lock;
+      lock.addEventListener("release", () => {
+        wakeLockRef.current = null;
+      });
+    } catch {
+      // Wake Lock can fail (low battery, etc.) — don't break recording
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release().catch(() => {});
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  // Re-acquire Wake Lock when tab regains visibility
+  // (Wake Lock auto-releases when tab loses visibility)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState === "visible" &&
+        recorderRef.current &&
+        recorderRef.current.state === "recording"
+      ) {
+        requestWakeLock();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [requestWakeLock]);
+
+  // ── Layer 2: Detect page death ──
+  // When the page goes hidden while recording, persist lesson info to sessionStorage
+  // so the recovery flow (Layer 3 on dashboard) can detect and handle orphaned lessons
+  useEffect(() => {
+    const handlePageHide = () => {
+      // If we're already in the stop flow, don't interfere
+      if (stoppingRef.current) return;
+
+      const currentLessonId = lessonIdRef.current;
+      if (!currentLessonId) return;
+
+      // The recorder might already be inactive if the tab was backgrounded
+      const recorder = recorderRef.current;
+      if (recorder && recorder.state === "recording") {
+        // Request a final data chunk before potential death
+        try {
+          recorder.requestData();
+        } catch {
+          // Ignore — recorder may already be dead
+        }
+      }
+
+      // Persist active lesson info for recovery on next app load
+      // sessionStorage survives tab reload but not tab close;
+      // we use it as a hint for the recovery banner
+      try {
+        const info: ActiveLessonInfo = {
+          lessonId: currentLessonId,
+          studentId: studentId,
+          studentName: student?.name ?? "Unknown",
+          startedAt: new Date().toISOString(),
+        };
+        sessionStorage.setItem(ACTIVE_LESSON_KEY, JSON.stringify(info));
+      } catch {
+        // sessionStorage might be full or unavailable
+      }
+    };
+
+    const handleVisibilityHidden = () => {
+      if (document.visibilityState === "hidden") {
+        handlePageHide();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityHidden);
+    // pagehide fires reliably on mobile when the tab is killed
+    window.addEventListener("pagehide", handlePageHide);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityHidden);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [studentId, student]);
 
   // Fetch student + create lesson + start recording
   useEffect(() => {
@@ -51,6 +168,19 @@ export default function ActiveRecordingPage() {
         });
         if (cancelled) return;
         setLessonId(lesson.id);
+
+        // Persist lesson info for orphan recovery
+        try {
+          const info: ActiveLessonInfo = {
+            lessonId: lesson.id,
+            studentId: studentId,
+            studentName: stu.name,
+            startedAt: new Date().toISOString(),
+          };
+          sessionStorage.setItem(ACTIVE_LESSON_KEY, JSON.stringify(info));
+        } catch {
+          // sessionStorage unavailable
+        }
 
         // 3. Start recording
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -87,6 +217,9 @@ export default function ActiveRecordingPage() {
         recorder.start(1000);
         recorderRef.current = recorder;
 
+        // Request Wake Lock to keep screen alive
+        requestWakeLock();
+
         // 4. Start timer
         timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
       } catch (err) {
@@ -109,12 +242,16 @@ export default function ActiveRecordingPage() {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
+      releaseWakeLock();
     };
-  }, [studentId]);
+  }, [studentId, requestWakeLock, releaseWakeLock]);
 
   const handleStop = useCallback(async () => {
     if (stopping || !lessonId) return;
     setStopping(true);
+
+    // Release Wake Lock
+    releaseWakeLock();
 
     // Stop timer
     if (timerRef.current) {
@@ -156,13 +293,20 @@ export default function ActiveRecordingPage() {
         `${lessonId}.webm`,
       );
 
+      // Clear active lesson from sessionStorage — lesson completed normally
+      try {
+        sessionStorage.removeItem(ACTIVE_LESSON_KEY);
+      } catch {
+        // Ignore
+      }
+
       // Navigate to processing screen
       router.push(`/lesson/${lessonId}/processing`);
     } catch (err) {
       setError((err as Error).message);
       setStopping(false);
     }
-  }, [stopping, lessonId, router]);
+  }, [stopping, lessonId, router, releaseWakeLock]);
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);

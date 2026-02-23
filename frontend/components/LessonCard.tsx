@@ -7,7 +7,7 @@ interface LessonCardProps {
   studentName: string;
   piece: string | null;
   date: string;
-  status: "recording" | "processing" | "completed" | "failed";
+  status: "recording" | "processing" | "completed" | "failed" | "cancelled";
 }
 
 const STATUS_CONFIG: Record<
@@ -18,6 +18,7 @@ const STATUS_CONFIG: Record<
   processing: { dot: "bg-warning", label: "Processing" },
   recording: { dot: "bg-record-red", label: "Recording" },
   failed: { dot: "bg-error", label: "Failed" },
+  cancelled: { dot: "bg-stone", label: "Cancelled" },
 };
 
 /** Deterministic pastel background from a name string. */
