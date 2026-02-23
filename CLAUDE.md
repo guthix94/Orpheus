@@ -36,6 +36,7 @@ Teacher opens app → selects/creates student → taps Record → teaches normal
 - Previous lesson context passed to LLM for continuity
 - LLM narrative generation (Claude Haiku 4.5) with transcription error correction
 - Produces teacher summary + parent summary + practice assignments
+- Formal summary mode: when `summary_style="formal"`, generates an additional clinical/detailed summary suitable for professional documentation
 
 **Lesson Summary Page:**
 - Teacher summary — specific, technical, includes observations
@@ -427,11 +428,24 @@ When a teacher says "let's work from here to here" while pointing at the score, 
 ```
 orpheus/
 ├── CLAUDE.md                    # This file
-├── orpheus-blueprint.md         # Full product blueprint
+├── README.md
 ├── pyproject.toml               # Python dependencies
+├── requirements.txt             # Pip dependencies (mirrors pyproject.toml)
+├── alembic.ini                  # Database migration config
+├── docker-compose.yml           # Local dev Docker setup
+├── .env.example                 # Environment variable template
+│
+├── docs/
+│   └── orpheus-blueprint.md     # Full product blueprint
+│
+├── alembic/                     # Database migrations
+│   ├── env.py
+│   └── versions/
+│       └── 0001_initial_tables.py
 │
 ├── server/                      # FastAPI backend
 │   ├── main.py                  # App entry, CORS (dynamic origin reflection), lifespan
+│   │                            # Mounts: students, lessons, parents, assignments routers
 │   ├── config.py                # Environment variables, Pydantic settings
 │   ├── database.py              # Async SQLAlchemy, statement_cache_size=0
 │   ├── auth.py                  # JWKS-based JWT verification (Supabase ECC tokens)
@@ -448,17 +462,18 @@ orpheus/
 │   ├── schemas/                 # Pydantic request/response schemas
 │   │   ├── student.py
 │   │   ├── lesson.py
-│   │   ├── summary.py
+│   │   ├── assignment.py
 │   │   ├── parent_message.py
-│   │   └── export.py
+│   │   ├── summary.py           # Empty — not yet implemented
+│   │   └── export.py            # Empty — not yet implemented
 │   │
 │   ├── api/                     # API route handlers (all scoped by teacher_id)
-│   │   ├── students.py          # CRUD for students
-│   │   ├── lessons.py           # Start/stop lesson, get summary, upload audio
-│   │   ├── pieces.py            # Score database queries
-│   │   ├── parents.py           # Parent message endpoints
-│   │   ├── assignments.py       # Assignment tracking (teacher_id verified via student join)
-│   │   └── export.py            # Student record export
+│   │   ├── students.py          # CRUD for students ✅ mounted
+│   │   ├── lessons.py           # Start/stop lesson, get summary, upload audio ✅ mounted
+│   │   ├── parents.py           # Parent message endpoints ✅ mounted
+│   │   ├── assignments.py       # Assignment tracking ✅ mounted
+│   │   ├── pieces.py            # Score database queries (stub, NOT mounted in main.py)
+│   │   └── export.py            # Student record export (stub, NOT mounted in main.py)
 │   │
 │   └── services/                # Business logic
 │       ├── audio_upload.py      # Handle incoming audio files
@@ -469,18 +484,16 @@ orpheus/
 │   ├── pipeline.py              # Main orchestrator (uses sync DB engine)
 │   │                            # Builds Whisper prompt, formats timestamps,
 │   │                            # queries previous lesson, calls stages
+│   ├── worker.py                # Celery/RQ stub (not active, processing is in-process)
 │   │
 │   ├── stages/                  # Each processing stage as a module
-│   │   ├── transcription.py     # Groq/Whisper: speech → timestamped text
+│   │   ├── transcription.py     # Groq/Whisper: speech → timestamped text ✅ live
 │   │   │                        # Accepts prompt parameter for vocabulary hints
-│   │   ├── narrative.py         # Claude Haiku 4.5 → teacher + parent summaries
+│   │   ├── narrative.py         # Claude Haiku 4.5 → teacher + parent summaries ✅ live
 │   │   │                        # Includes: transcript cleanup, timestamp awareness,
 │   │   │                        # previous lesson continuity, formal mode option
 │   │   │
-│   │   │  # Next stage (Phase 1.75):
-│   │   ├── vad.py               # Silero VAD: strip music before Whisper (planned)
-│   │   │
-│   │   │  # Future stages (Phase 2+):
+│   │   │  # Future stages (stubs with 1-line docstrings):
 │   │   ├── source_separation.py # Demucs: split speech from instrument
 │   │   ├── entity_extraction.py # Extract piece names from transcript
 │   │   ├── pitch_detection.py   # pYIN: audio → pitch curve
@@ -493,10 +506,23 @@ orpheus/
 │   │   ├── behavior.py          # Classify: run-through, spot practice, etc.
 │   │   └── timeline_merge.py    # Combine speech + music into timeline
 │   │
-│   └── utils/
+│   └── utils/                   # All stubs — not yet implemented
 │       ├── audio_io.py          # Load/save/convert audio files
 │       ├── confidence.py        # Confidence scoring utilities
 │       └── music_theory.py      # Cents calculation, note naming, etc.
+│
+├── scores/                      # Score database system
+│   ├── database.py              # Score lookup and management
+│   ├── loader.py                # Load MusicXML/MIDI files
+│   ├── chroma_cache.py          # Pre-computed reference chroma features
+│   └── data/                    # Score files organized by book/collection
+│       └── suzuki/              # Empty Suzuki book folders (to be populated)
+│
+├── scripts/                     # Utility scripts
+│   ├── generate_chroma_cache.py # Pre-compute chroma features for scores
+│   ├── seed_scores.py           # Populate score database
+│   ├── simulate_lesson.py       # Test pipeline with simulated lesson
+│   └── test_api_flow.py         # End-to-end API test
 │
 ├── frontend/                    # Next.js web app
 │   ├── package.json
@@ -504,29 +530,49 @@ orpheus/
 │   │   ├── supabase.ts          # Supabase client (browser)
 │   │   └── api.ts               # API client (auto-attaches Bearer token)
 │   ├── app/
-│   │   ├── login/page.tsx       # Email/password login + signup
+│   │   ├── login/
+│   │   │   ├── page.tsx         # Email/password login + signup
+│   │   │   └── layout.tsx       # Login-specific layout
 │   │   ├── page.tsx             # Redirects to dashboard
 │   │   ├── lesson/
-│   │   │   ├── record/page.tsx  # Record screen (student select + record button)
-│   │   │   └── [id]/page.tsx    # Lesson summary view
+│   │   │   ├── record/
+│   │   │   │   ├── page.tsx     # Record screen (student select + record)
+│   │   │   │   └── [studentId]/page.tsx  # Direct record for specific student
+│   │   │   └── [id]/
+│   │   │       ├── page.tsx     # Lesson summary view
+│   │   │       └── processing/page.tsx   # Processing status page
 │   │   ├── students/
 │   │   │   ├── page.tsx         # Student list
-│   │   │   └── [id]/page.tsx    # Student profile + history
-│   │   ├── dashboard/
-│   │   │   └── page.tsx         # Teacher dashboard (studio overview)
-│   │   └── parent/
-│   │       └── [token]/page.tsx # Public parent portal (future)
+│   │   │   └── [id]/
+│   │   │       ├── page.tsx     # Student profile + history
+│   │   │       ├── record/page.tsx   # Quick-record from student profile
+│   │   │       └── export/page.tsx   # Student record export
+│   │   └── dashboard/
+│   │       └── page.tsx         # Teacher dashboard (studio overview)
 │   └── components/
 │       ├── AudioRecorder.tsx     # MediaRecorder wrapper (music-optimized)
 │       ├── LessonSummary.tsx     # Summary display
+│       ├── LessonCard.tsx        # Lesson list item
 │       ├── SendToParentModal.tsx # Parent message with Copy button
+│       ├── ParentMessage.tsx     # Parent message display
 │       ├── StudentCard.tsx       # Student list item
 │       ├── AuthGuard.tsx         # Redirects to /login if no session
-│       ├── AppShellWrapper.tsx   # Sidebar/nav layout (hidden on login)
-│       └── AssignmentTracker.tsx # Assignment list with status
+│       ├── AssignmentTracker.tsx # Assignment list with status
+│       ├── EditableAssignmentCard.tsx  # Editable assignment
+│       ├── EditableChip.tsx      # Editable tag/chip
+│       ├── TempoChart.tsx        # Tempo visualization
+│       ├── layout/
+│       │   ├── AppShell.tsx      # Main layout wrapper
+│       │   ├── Sidebar.tsx       # Navigation sidebar
+│       │   └── MobileNav.tsx     # Mobile navigation
+│       └── ui/
+│           ├── FadeIn.tsx        # Fade-in animation wrapper
+│           └── QuickStatCard.tsx # Dashboard stat card
 │
 └── tests/
     ├── test_pipeline.py         # End-to-end pipeline tests
+    ├── test_alignment.py        # Score alignment tests
+    ├── test_pitch.py            # Pitch detection tests
     └── fixtures/                # Test audio files
 ```
 
@@ -590,7 +636,8 @@ class Student:
     notes: str | None
     parent_email: str | None
     parent_phone: str | None
-    parent_portal_token: UUID     # Future: unique token for parent portal link
+    # Planned (not yet on schema):
+    # parent_portal_token: UUID   # Unique token for parent portal link
 ```
 
 ### Lesson
@@ -604,18 +651,21 @@ class Lesson:
     duration_seconds: int
     audio_file_path: str | None   # Railway local disk, not Supabase Storage
     status: str                   # "recording", "processing", "completed", "failed"
+    summary_style: str            # "standard" or "formal"
     # Populated after processing:
     pieces_detected: list[str]
     timeline_json: dict
     teacher_summary: str
+    teacher_summary_formal: str | None  # Generated when summary_style="formal"
     parent_summary: str
     suggested_assignments: list[dict]
     processing_metadata: dict     # Confidence scores, processing time
-    vad_segments: list[dict]      # Future: VAD segmentation map
     # Immutability:
     confirmed_at: datetime | None
     is_locked: bool               # True after confirmation
     amendments: list[dict] | None # Timestamped teacher notes after confirmation
+    # Planned (not yet on schema):
+    # vad_segments: list[dict]    # VAD segmentation map from Silero
 ```
 
 ## Processing Pipeline — Current Implementation
@@ -782,4 +832,4 @@ Same pipeline, different entry point. Parent opens portal, taps "Record Practice
 
 ## Reference: Full Blueprint
 
-The complete product blueprint with all business context, edge cases, UX details, and knowledge graph architecture is in `orpheus-blueprint.md`. Read this for the full picture of why decisions were made and where the product is heading long-term.
+The complete product blueprint with all business context, edge cases, UX details, and knowledge graph architecture is in `docs/orpheus-blueprint.md`. Read this for the full picture of why decisions were made and where the product is heading long-term.
