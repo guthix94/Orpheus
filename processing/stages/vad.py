@@ -142,7 +142,7 @@ def _load_audio(audio_path: Path) -> tuple:
         else:
             load_path = audio_path
 
-        waveform, sr = torchaudio.load(str(load_path))
+        waveform, sr = torchaudio.load(str(load_path), backend="soundfile")
         logger.debug(
             "VAD: torchaudio.load — shape=%s, sr=%d, dtype=%s",
             list(waveform.shape), sr, waveform.dtype,
