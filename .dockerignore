@@ -1,0 +1,40 @@
+.git
+.gitignore
+.env
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.egg-info
+dist
+build
+
+# Frontend is deployed on Vercel, not in this container
+frontend
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+
+# Audio files
+storage/audio/
+
+# Testing / linting caches
+.coverage
+htmlcov
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Docker
+docker-compose.yml
+docker-compose.override.yml
+Dockerfile
+.dockerignore
+
+# Docs
+docs
+README.md
+CLAUDE.md
