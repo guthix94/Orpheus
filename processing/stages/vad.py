@@ -91,8 +91,7 @@ def _load_vad_model():
 def _convert_to_wav(audio_path: Path) -> Path:
     """Convert audio file to 16kHz mono WAV using ffmpeg.
 
-    torchaudio's webm support depends on the backend and can be unreliable,
-    so we convert via ffmpeg first for robust loading.
+    Ensures a consistent 16kHz mono WAV regardless of input format.
 
     Uses the static ffmpeg binary bundled with imageio-ffmpeg so that ffmpeg
     doesn't need to be installed at the OS level (e.g. on Railway/Railpack).
@@ -126,38 +125,30 @@ def _convert_to_wav(audio_path: Path) -> Path:
 def _load_audio(audio_path: Path) -> tuple:
     """Load audio file and return (waveform_tensor, sample_rate).
 
-    Converts to WAV first if needed, then loads with torchaudio.
-    Returns a 16kHz mono waveform.
+    Always converts to 16kHz mono WAV via ffmpeg first (handles any input
+    format), then loads with soundfile.  Returns a 1-D tensor at 16kHz.
     """
+    import soundfile as sf
     import torch
-    import torchaudio
 
-    suffix = audio_path.suffix.lower()
     wav_path = None
 
     try:
-        if suffix in (".webm", ".ogg", ".mp4", ".m4a", ".aac"):
-            wav_path = _convert_to_wav(audio_path)
-            load_path = wav_path
-        else:
-            load_path = audio_path
+        # Always convert via ffmpeg to guarantee 16kHz mono WAV
+        wav_path = _convert_to_wav(audio_path)
 
-        waveform, sr = torchaudio.load(str(load_path), backend="soundfile")
+        data, sr = sf.read(str(wav_path))  # numpy array: (samples,) or (samples, channels)
+        waveform = torch.from_numpy(data).float()
         logger.debug(
-            "VAD: torchaudio.load — shape=%s, sr=%d, dtype=%s",
+            "VAD: soundfile.read — shape=%s, sr=%d, dtype=%s",
             list(waveform.shape), sr, waveform.dtype,
         )
 
-        # Convert to mono if stereo
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
+        # soundfile returns (samples, channels) for multi-channel; average to mono
+        if waveform.ndim > 1:
+            waveform = waveform.mean(dim=-1)
 
-        # Resample to 16kHz if needed
-        if sr != _VAD_SAMPLE_RATE:
-            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=_VAD_SAMPLE_RATE)
-            waveform = resampler(waveform)
-
-        result_waveform = waveform.squeeze(0)
+        result_waveform = waveform  # 1-D, already 16kHz mono from ffmpeg
 
         # Log amplitude stats — critical for diagnosing "no speech detected"
         rms = (result_waveform.float() ** 2).mean().sqrt().item()
@@ -301,11 +292,11 @@ def _extract_speech_audio(
     concatenated = torch.cat(chunks)
     total_speech_duration = concatenated.shape[0] / sample_rate
 
-    # Save to temp file
-    import torchaudio
+    # Save to temp file using soundfile (avoids torchaudio backend issues)
+    import soundfile as sf
 
     temp_path = Path(tempfile.mktemp(suffix=".wav"))
-    torchaudio.save(str(temp_path), concatenated.unsqueeze(0), sample_rate)
+    sf.write(str(temp_path), concatenated.numpy(), sample_rate)
 
     return temp_path, mappings, total_speech_duration
 
