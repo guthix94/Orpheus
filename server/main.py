@@ -1,3 +1,4 @@
+# ffmpeg now available via Dockerfile
 """Orpheus API server entry point."""
 
 import logging
