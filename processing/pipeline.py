@@ -1,4 +1,4 @@
-# VAD requires ffmpeg — installed via nixpacks.toml
+# VAD requires ffmpeg — bundled via imageio-ffmpeg pip package
 """Main pipeline orchestrator — runs all processing stages in order.
 
 Pipeline (speech-to-summary with VAD pre-processing):

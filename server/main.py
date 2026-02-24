@@ -1,5 +1,4 @@
-# Dockerfile CMD fix - trigger deploy
-# ffmpeg now available via Dockerfile
+# ffmpeg available via imageio-ffmpeg pip package (no OS-level install needed)
 """Orpheus API server entry point."""
 
 import logging

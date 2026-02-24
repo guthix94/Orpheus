@@ -93,10 +93,16 @@ def _convert_to_wav(audio_path: Path) -> Path:
 
     torchaudio's webm support depends on the backend and can be unreliable,
     so we convert via ffmpeg first for robust loading.
+
+    Uses the static ffmpeg binary bundled with imageio-ffmpeg so that ffmpeg
+    doesn't need to be installed at the OS level (e.g. on Railway/Railpack).
     """
+    import imageio_ffmpeg
+
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     wav_path = Path(tempfile.mktemp(suffix=".wav"))
     cmd = [
-        "ffmpeg", "-y", "-i", str(audio_path),
+        ffmpeg_path, "-y", "-i", str(audio_path),
         "-ar", str(_VAD_SAMPLE_RATE),
         "-ac", "1",
         "-f", "wav",
