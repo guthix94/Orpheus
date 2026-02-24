@@ -1,2 +1,4 @@
 [build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 watchPatterns = ["server/**", "processing/**", "pyproject.toml", "Dockerfile", "Procfile", "nixpacks.toml", "railway.toml"]
