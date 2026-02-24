@@ -44,6 +44,11 @@ class Lesson(Base):
     # Format: [{"start": 0.0, "end": 3.2, "type": "speech"}, ...]
     vad_segments: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
 
+    # Audio clips — populated by clips processing stage after narrative generation
+    # Format: [{"index": 0, "start": 3.5, "end": 28.2, "duration": 24.7,
+    #           "types": ["speech", "music"], "url": "https://..."}]
+    clips: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+
     # Immutability
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

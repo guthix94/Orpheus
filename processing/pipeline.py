@@ -295,6 +295,45 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                 "transcript_segments": transcript_segments,
             }
 
+            # ---- Stage 3: Audio Clips ----
+            # Run after narrative generation. Only if VAD segments and audio exist.
+            clips_metadata: list[dict] = []
+            clips_duration = 0.0
+            if audio_path and lesson.vad_segments:
+                from processing.stages.clips import run_clips
+
+                logger.info("Pipeline[%s]: starting clips processing", lesson_id)
+                t0 = time.time()
+                try:
+                    clips_metadata = run_clips(
+                        lesson_id=lesson_id,
+                        audio_file_path=audio_path,
+                        vad_segments=lesson.vad_segments,
+                        supabase_url=settings.supabase_url,
+                        service_role_key=settings.supabase_service_role_key,
+                    )
+                    clips_duration = time.time() - t0
+                    logger.info(
+                        "Pipeline[%s]: clips done in %.1fs — %d clips",
+                        lesson_id, clips_duration, len(clips_metadata),
+                    )
+                except Exception:
+                    logger.exception("Pipeline[%s]: clips stage failed — continuing without clips", lesson_id)
+                    clips_duration = time.time() - t0
+
+                if clips_metadata:
+                    lesson.clips = clips_metadata
+
+                    # Delete raw audio from Railway disk now that clips are in Supabase
+                    try:
+                        os.remove(audio_path)
+                        logger.info("Pipeline[%s]: deleted raw audio %s", lesson_id, audio_path)
+                    except OSError:
+                        logger.warning(
+                            "Pipeline[%s]: failed to delete raw audio %s",
+                            lesson_id, audio_path,
+                        )
+
             # Build processing metadata
             metadata: dict = {
                 "pipeline_version": "vad-speech-to-summary",
@@ -304,6 +343,8 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                 "vad_status": vad_status,
                 "transcription_seconds": round(transcription_duration, 2),
                 "narrative_seconds": round(narrative_duration, 2),
+                "clips_seconds": round(clips_duration, 2),
+                "clips_count": len(clips_metadata),
                 "total_seconds": round(time.time() - pipeline_start, 2),
                 "transcript_length": len(transcript_text),
             }
