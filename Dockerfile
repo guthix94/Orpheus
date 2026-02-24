@@ -11,4 +11,4 @@ COPY . .
 
 RUN mkdir -p storage/audio
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", "timeout 30 alembic upgrade head; uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
