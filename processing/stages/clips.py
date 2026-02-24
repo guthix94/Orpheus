@@ -145,6 +145,7 @@ def _upload_clip(
 
     headers = {
         "Authorization": f"Bearer {service_role_key}",
+        "apikey": service_role_key,
         "Content-Type": "audio/webm",
     }
 
