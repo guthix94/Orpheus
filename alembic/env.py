@@ -35,7 +35,11 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = create_engine(_sync_database_url, poolclass=pool.NullPool)
+    connectable = create_engine(
+        _sync_database_url,
+        poolclass=pool.NullPool,
+        connect_args={"connect_timeout": 10},
+    )
 
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
