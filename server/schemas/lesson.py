@@ -50,6 +50,7 @@ class LessonResponse(BaseModel):
     suggested_assignments: list[dict[str, Any]] | None = None
     processing_metadata: dict[str, Any] | None = None
     timeline_json: dict[str, Any] | None = None
+    clips: list[dict[str, Any]] | None = None
     confirmed_at: datetime | None = None
     is_locked: bool = False
 
