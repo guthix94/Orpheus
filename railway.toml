@@ -1,0 +1,2 @@
+[build]
+watchPatterns = ["server/**", "processing/**", "pyproject.toml", "Dockerfile"]
