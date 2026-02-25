@@ -29,6 +29,7 @@ dependencies = [
     # Silero VAD (CPU-only inference — no GPU/CUDA needed)
     # Install from CPU index via requirements.txt --extra-index-url
     "torch>=2.1.0",
+    "torchaudio>=2.1.0",  # required by Silero VAD internally (utils_vad.py imports it)
 
     # Speech-to-text (Groq-hosted Whisper)
     "groq>=0.4.0",

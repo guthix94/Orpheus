@@ -30,6 +30,7 @@ scipy>=1.12.0
 
 # Silero VAD (CPU-only inference — no GPU/CUDA needed)
 torch>=2.1.0
+torchaudio>=2.1.0  # Silero VAD's utils_vad.py imports torchaudio at module level
 
 # Speech-to-text (Groq-hosted Whisper)
 groq>=0.4.0
