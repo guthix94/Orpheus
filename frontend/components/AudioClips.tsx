@@ -88,7 +88,7 @@ export default function AudioClips({ clips }: { clips: Clip[] }) {
         {clips.map((clip) => (
           <div
             key={clip.index}
-            className="flex items-center gap-3 rounded-xl border border-sand bg-warm-white px-4 py-3 shadow-card transition-shadow hover:shadow-card-hover"
+            className="flex items-start gap-3 rounded-xl border border-sand bg-warm-white px-4 py-3 shadow-card transition-shadow hover:shadow-card-hover"
           >
             {/* Play / Pause button */}
             <button
@@ -111,7 +111,7 @@ export default function AudioClips({ clips }: { clips: Clip[] }) {
 
             {/* Label + timestamp */}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-charcoal">
+              <p className="text-sm font-medium text-charcoal">
                 {clipLabel(clip)}
               </p>
               <p className="text-xs text-stone">
