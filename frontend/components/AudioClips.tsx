@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Play, Volume2 } from "lucide-react";
 
 export interface Clip {
@@ -27,6 +27,149 @@ function clipLabel(clip: Clip): string {
   if (hasMusic) return "Music";
   if (hasSpeech) return "Speech";
   return clip.types.join(", ") || "Clip";
+}
+
+function ProgressBar({
+  clipIndex,
+  audioRef,
+  isPlaying,
+  clipDuration,
+}: {
+  clipIndex: number;
+  audioRef: HTMLAudioElement | undefined;
+  isPlaying: boolean;
+  clipDuration: number;
+}) {
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(clipDuration);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const rafRef = useRef<number>(0);
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!audioRef) return;
+
+    const onLoaded = () => {
+      if (audioRef.duration && isFinite(audioRef.duration)) {
+        setDuration(audioRef.duration);
+      }
+    };
+
+    audioRef.addEventListener("loadedmetadata", onLoaded);
+    audioRef.addEventListener("durationchange", onLoaded);
+
+    // Pick up duration if already loaded
+    if (audioRef.duration && isFinite(audioRef.duration)) {
+      setDuration(audioRef.duration);
+    }
+
+    return () => {
+      audioRef.removeEventListener("loadedmetadata", onLoaded);
+      audioRef.removeEventListener("durationchange", onLoaded);
+    };
+  }, [audioRef]);
+
+  // Use requestAnimationFrame for smooth progress updates while playing
+  useEffect(() => {
+    if (!audioRef || !isPlaying) {
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
+
+    const tick = () => {
+      if (!isSeeking) {
+        setCurrentTime(audioRef.currentTime);
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [audioRef, isPlaying, isSeeking]);
+
+  // Reset time display when clip finishes
+  useEffect(() => {
+    if (!audioRef) return;
+    const onEnded = () => setCurrentTime(0);
+    audioRef.addEventListener("ended", onEnded);
+    return () => audioRef.removeEventListener("ended", onEnded);
+  }, [audioRef]);
+
+  const seek = useCallback(
+    (clientX: number) => {
+      if (!audioRef || !barRef.current) return;
+      const rect = barRef.current.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const newTime = ratio * duration;
+      audioRef.currentTime = newTime;
+      setCurrentTime(newTime);
+    },
+    [audioRef, duration],
+  );
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      setIsSeeking(true);
+      seek(e.clientX);
+
+      const onMove = (ev: PointerEvent) => seek(ev.clientX);
+      const onUp = (ev: PointerEvent) => {
+        seek(ev.clientX);
+        setIsSeeking(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [seek],
+  );
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <span className="w-8 text-right text-[10px] tabular-nums text-stone">
+        {formatTime(currentTime)}
+      </span>
+      <div
+        ref={barRef}
+        onPointerDown={handlePointerDown}
+        className="relative h-1.5 flex-1 cursor-pointer rounded-full bg-ivory"
+        role="slider"
+        aria-label={`Seek clip ${clipIndex}`}
+        aria-valuenow={Math.round(currentTime)}
+        aria-valuemin={0}
+        aria-valuemax={Math.round(duration)}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (!audioRef) return;
+          const step = 5;
+          if (e.key === "ArrowRight") {
+            audioRef.currentTime = Math.min(duration, audioRef.currentTime + step);
+            setCurrentTime(audioRef.currentTime);
+          } else if (e.key === "ArrowLeft") {
+            audioRef.currentTime = Math.max(0, audioRef.currentTime - step);
+            setCurrentTime(audioRef.currentTime);
+          }
+        }}
+      >
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-amber transition-[width] duration-75"
+          style={{ width: `${progress}%` }}
+        />
+        <div
+          className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-amber shadow-sm opacity-0 transition-opacity group-hover/clip:opacity-100"
+          style={{ left: `${progress}%`, opacity: isPlaying || isSeeking ? 1 : undefined }}
+        />
+      </div>
+      <span className="w-8 text-[10px] tabular-nums text-mist">
+        {formatTime(duration)}
+      </span>
+    </div>
+  );
 }
 
 export default function AudioClips({ clips }: { clips: Clip[] }) {
@@ -88,39 +231,49 @@ export default function AudioClips({ clips }: { clips: Clip[] }) {
         {clips.map((clip) => (
           <div
             key={clip.index}
-            className="flex items-start gap-3 rounded-xl border border-sand bg-warm-white px-4 py-3 shadow-card transition-shadow hover:shadow-card-hover"
+            className="group/clip rounded-xl border border-sand bg-warm-white px-4 py-3 shadow-card transition-shadow hover:shadow-card-hover"
           >
-            {/* Play / Pause button */}
-            <button
-              onClick={() => togglePlay(clip.index)}
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
-                playingIndex === clip.index
-                  ? "bg-amber text-white"
-                  : "bg-ivory text-charcoal hover:bg-amber-glow hover:text-amber"
-              }`}
-              aria-label={
-                playingIndex === clip.index ? "Pause clip" : "Play clip"
-              }
-            >
-              {playingIndex === clip.index ? (
-                <Pause size={14} />
-              ) : (
-                <Play size={14} className="ml-0.5" />
-              )}
-            </button>
+            <div className="flex items-start gap-3">
+              {/* Play / Pause button */}
+              <button
+                onClick={() => togglePlay(clip.index)}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+                  playingIndex === clip.index
+                    ? "bg-amber text-white"
+                    : "bg-ivory text-charcoal hover:bg-amber-glow hover:text-amber"
+                }`}
+                aria-label={
+                  playingIndex === clip.index ? "Pause clip" : "Play clip"
+                }
+              >
+                {playingIndex === clip.index ? (
+                  <Pause size={14} />
+                ) : (
+                  <Play size={14} className="ml-0.5" />
+                )}
+              </button>
 
-            {/* Label + timestamp */}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-charcoal">
-                {clipLabel(clip)}
-              </p>
-              <p className="text-xs text-stone">
-                {formatTime(clip.start)} &ndash; {formatTime(clip.end)}
-                <span className="ml-1.5 text-mist">
-                  ({formatTime(clip.duration)})
-                </span>
-              </p>
+              {/* Label + timestamp */}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-charcoal">
+                  {clipLabel(clip)}
+                </p>
+                <p className="text-xs text-stone">
+                  {formatTime(clip.start)} &ndash; {formatTime(clip.end)}
+                  <span className="ml-1.5 text-mist">
+                    ({formatTime(clip.duration)})
+                  </span>
+                </p>
+              </div>
             </div>
+
+            {/* Progress bar with seek and time display */}
+            <ProgressBar
+              clipIndex={clip.index}
+              audioRef={audioRefs.current.get(clip.index)}
+              isPlaying={playingIndex === clip.index}
+              clipDuration={clip.duration}
+            />
 
             {/* Hidden audio element */}
             <audio
