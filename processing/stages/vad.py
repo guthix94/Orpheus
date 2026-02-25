@@ -41,6 +41,9 @@ _MUSIC_ENERGY_THRESHOLD = 0.005
 # Minimum speech segment duration to keep (seconds) — filters VAD micro-detections
 _MIN_SPEECH_DURATION_S = 0.15
 
+# Groq Whisper upload limit
+_GROQ_MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+
 
 @dataclass
 class VADSegment:
@@ -301,6 +304,101 @@ def _extract_speech_audio(
     return temp_path, mappings, total_speech_duration
 
 
+def _compress_speech_audio(wav_path: Path) -> Path:
+    """Compress speech-only WAV to a smaller format for Groq upload.
+
+    Groq Whisper has a 25 MB upload limit.  Uncompressed 16 kHz mono WAV
+    uses ~1.9 MB/min, so any lesson with more than ~13 minutes of speech
+    will exceed the limit.  Compressing to OGG Opus at 32 kbps typically
+    achieves 50-60x size reduction.
+
+    Tries OGG Opus first (best speech compression), then falls back to
+    MP3 if the bundled ffmpeg lacks libopus.
+
+    Returns the path to the compressed file.  Deletes the input WAV on
+    success.  If all compression attempts fail, returns the original WAV
+    path unchanged (the upload may still fail with 413, but the pipeline
+    will handle that gracefully).
+    """
+    import imageio_ffmpeg
+
+    file_size = wav_path.stat().st_size
+    if file_size <= _GROQ_MAX_FILE_SIZE:
+        logger.debug(
+            "VAD: speech WAV is %d bytes (under 25 MB limit) — skipping compression",
+            file_size,
+        )
+        return wav_path
+
+    logger.info(
+        "VAD: speech WAV is %.1f MB — compressing to stay under Groq's 25 MB limit",
+        file_size / (1024 * 1024),
+    )
+
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+
+    # Try codecs in order of preference.
+    # OGG Opus at 32 kbps: ~0.24 MB/min — handles up to ~100 min of speech.
+    # MP3 at 64 kbps: ~0.48 MB/min — handles up to ~50 min of speech.
+    codecs_to_try = [
+        (".ogg", ["-c:a", "libopus", "-b:a", "32k"]),
+        (".mp3", ["-c:a", "libmp3lame", "-b:a", "64k"]),
+    ]
+
+    for suffix, codec_args in codecs_to_try:
+        compressed_path = Path(tempfile.mktemp(suffix=suffix))
+        cmd = [
+            ffmpeg_path, "-y",
+            "-i", str(wav_path),
+            "-ar", str(_VAD_SAMPLE_RATE),
+            "-ac", "1",
+            *codec_args,
+            str(compressed_path),
+        ]
+        logger.debug("VAD: compressing — %s", " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, timeout=120)
+
+        if (
+            result.returncode == 0
+            and compressed_path.exists()
+            and compressed_path.stat().st_size > 0
+        ):
+            compressed_size = compressed_path.stat().st_size
+            logger.info(
+                "VAD: compressed speech audio %.1f MB → %.1f MB (%s, %.0fx reduction)",
+                file_size / (1024 * 1024),
+                compressed_size / (1024 * 1024),
+                suffix,
+                file_size / compressed_size,
+            )
+            # Delete the intermediate WAV
+            try:
+                wav_path.unlink()
+            except OSError:
+                logger.warning("VAD: failed to delete intermediate WAV %s", wav_path)
+            return compressed_path
+
+        # Compression failed — clean up and try next codec
+        stderr = result.stderr.decode(errors="replace") if result.stderr else ""
+        logger.warning(
+            "VAD: compression to %s failed (rc=%d): %s",
+            suffix,
+            result.returncode,
+            stderr[:300],
+        )
+        if compressed_path.exists():
+            try:
+                compressed_path.unlink()
+            except OSError:
+                pass
+
+    logger.warning(
+        "VAD: all compression attempts failed — returning uncompressed WAV (%.1f MB)",
+        file_size / (1024 * 1024),
+    )
+    return wav_path
+
+
 def remap_timestamp(trimmed_time: float, mappings: list[TimestampMapping]) -> float:
     """Convert a timestamp from speech-only audio time to real lesson time.
 
@@ -452,6 +550,11 @@ def run_vad(audio_path: str | Path) -> VADResult | None:
         speech_audio_path, mappings, speech_duration = _extract_speech_audio(
             waveform, sample_rate, speech_segments
         )
+
+        # Compress speech audio if it exceeds Groq's 25 MB upload limit.
+        # Uncompressed 16 kHz mono WAV is ~1.9 MB/min — any lesson with
+        # more than ~13 min of speech will blow the limit.
+        speech_audio_path = _compress_speech_audio(speech_audio_path)
 
         elapsed = time.time() - t0
         speech_pct = (speech_duration / total_duration * 100) if total_duration > 0 else 0
