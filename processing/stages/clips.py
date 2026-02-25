@@ -39,6 +39,12 @@ _MIN_CLIP_DURATION_S = 0.5
 # real audio content).  A webm with only headers is typically ~1 KB.
 _MIN_CLIP_FILE_BYTES = 1024
 
+# How far (seconds) from an LLM boundary to search for a natural pause.
+_SNAP_SEARCH_WINDOW_S = 5.0
+
+# Minimum silence/gap duration to count as a valid snap target.
+_MIN_PAUSE_FOR_SNAP_S = 0.15
+
 
 @dataclass
 class ClipGroup:
@@ -214,6 +220,117 @@ def _upload_clip(
         return None
 
 
+def _find_pause_points(vad_segments: list[dict]) -> list[tuple[float, float]]:
+    """Extract natural pause points from VAD data.
+
+    A pause is an explicit silence segment or an implicit gap between two
+    consecutive VAD segments.  Returns ``(start, end)`` tuples sorted by
+    start time, filtered to only include gaps >= ``_MIN_PAUSE_FOR_SNAP_S``.
+    """
+    if not vad_segments:
+        return []
+
+    pauses: list[tuple[float, float]] = []
+    sorted_segs = sorted(vad_segments, key=lambda s: s["start"])
+
+    # Explicit silence segments
+    for seg in sorted_segs:
+        if seg.get("type") == "silence":
+            pauses.append((float(seg["start"]), float(seg["end"])))
+
+    # Implicit gaps between consecutive VAD segments
+    for i in range(len(sorted_segs) - 1):
+        gap_start = float(sorted_segs[i]["end"])
+        gap_end = float(sorted_segs[i + 1]["start"])
+        if gap_end - gap_start >= _MIN_PAUSE_FOR_SNAP_S:
+            pauses.append((gap_start, gap_end))
+
+    pauses = [(s, e) for s, e in pauses if e - s >= _MIN_PAUSE_FOR_SNAP_S]
+    pauses.sort(key=lambda p: p[0])
+    return pauses
+
+
+def _nearest_pause_point(
+    boundary: float,
+    pauses: list[tuple[float, float]],
+) -> float:
+    """Find the best point within the nearest pause to snap a boundary to.
+
+    Returns the midpoint of the closest qualifying pause (within
+    ``_SNAP_SEARCH_WINDOW_S``), or the original *boundary* if no pause is
+    close enough.
+    """
+    best = boundary
+    best_dist = _SNAP_SEARCH_WINDOW_S  # hard limit
+
+    for pause_start, pause_end in pauses:
+        mid = (pause_start + pause_end) / 2.0
+        dist = abs(mid - boundary)
+        if dist < best_dist:
+            best_dist = dist
+            best = mid
+
+    return best
+
+
+def _snap_llm_boundaries(
+    llm_segments: list[dict],
+    vad_segments: list[dict],
+) -> list[dict]:
+    """Adjust LLM segment boundaries to fall at natural pauses.
+
+    For each *internal* boundary (the junction between two consecutive LLM
+    segments), the nearest silence gap from the VAD data is found and the
+    boundary is shifted there.  The very first start and very last end are
+    left untouched.
+
+    If snapping would make either neighbouring segment shorter than
+    ``_MIN_CLIP_DURATION_S``, that boundary is left unchanged.
+    """
+    if len(llm_segments) < 2 or not vad_segments:
+        return llm_segments
+
+    pauses = _find_pause_points(vad_segments)
+    if not pauses:
+        logger.debug("Clips: no pause points found in VAD data — skipping boundary snap")
+        return llm_segments
+
+    adjusted = [dict(seg) for seg in llm_segments]
+
+    for i in range(len(adjusted) - 1):
+        original = adjusted[i]["end_seconds"]
+        snapped = _nearest_pause_point(original, pauses)
+
+        if snapped == original:
+            continue
+
+        # Guard: don't create segments that are too short
+        seg_start = adjusted[i]["start_seconds"]
+        next_end = adjusted[i + 1]["end_seconds"]
+
+        if (snapped - seg_start) < _MIN_CLIP_DURATION_S:
+            logger.debug(
+                "Clips: skipping snap at %.1fs→%.1fs — would make segment %d too short",
+                original, snapped, i,
+            )
+            continue
+        if (next_end - snapped) < _MIN_CLIP_DURATION_S:
+            logger.debug(
+                "Clips: skipping snap at %.1fs→%.1fs — would make segment %d too short",
+                original, snapped, i + 1,
+            )
+            continue
+
+        logger.info(
+            "Clips: snapped boundary %.1fs → %.1fs (shifted %.1fs to nearest pause)",
+            original, snapped, snapped - original,
+        )
+        adjusted[i]["end_seconds"] = round(snapped, 3)
+        adjusted[i + 1]["start_seconds"] = round(snapped, 3)
+
+    return adjusted
+
+
 def _groups_from_llm_segments(llm_segments: list[dict]) -> list[ClipGroup]:
     """Convert LLM topic segments into ClipGroups.
 
@@ -281,7 +398,10 @@ def run_clips(
 
         # Use LLM topic segments when available, fall back to gap-based grouping
         if llm_segments:
-            clip_groups = _groups_from_llm_segments(llm_segments)
+            # Snap LLM boundaries to natural pauses so clips don't cut
+            # mid-speech.  Uses VAD silence data to find nearby gaps.
+            snapped = _snap_llm_boundaries(llm_segments, vad_segments)
+            clip_groups = _groups_from_llm_segments(snapped)
             if clip_groups:
                 logger.info("Clips[%s]: using %d LLM topic segments as clip boundaries", lesson_id, len(clip_groups))
             else:
