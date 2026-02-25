@@ -297,6 +297,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
             # ---- Stage 3: Audio Clips ----
             # Run after narrative generation. Only if VAD segments and audio exist.
+            # Pass LLM topic segments when available for smarter clip boundaries.
             clips_metadata: list[dict] = []
             clips_duration = 0.0
             if audio_path and lesson.vad_segments:
@@ -311,6 +312,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                         vad_segments=lesson.vad_segments,
                         supabase_url=settings.supabase_url,
                         service_role_key=settings.supabase_service_role_key,
+                        llm_segments=narrative.lesson_segments,
                     )
                     clips_duration = time.time() - t0
                     logger.info(
@@ -348,6 +350,8 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                 "total_seconds": round(time.time() - pipeline_start, 2),
                 "transcript_length": len(transcript_text),
             }
+            if narrative.lesson_segments:
+                metadata["lesson_segments"] = narrative.lesson_segments
             if vad_result is not None:
                 metadata["vad_speech_duration_s"] = round(vad_result.speech_duration_s, 2)
                 metadata["vad_original_duration_s"] = round(vad_result.original_duration_s, 2)

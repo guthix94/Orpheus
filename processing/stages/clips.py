@@ -171,12 +171,37 @@ def _upload_clip(
         return None
 
 
+def _groups_from_llm_segments(llm_segments: list[dict]) -> list[ClipGroup]:
+    """Convert LLM topic segments into ClipGroups.
+
+    Each LLM segment becomes exactly one clip. The label is stored on the
+    ClipGroup so it can be included in clip metadata.
+
+    Returns an empty list if anything is wrong with the input.
+    """
+    groups: list[ClipGroup] = []
+    for seg in llm_segments:
+        try:
+            start = float(seg["start_seconds"])
+            end = float(seg["end_seconds"])
+            label = str(seg.get("label", "")).strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        g = ClipGroup(start=start, end=end, types={"speech", "music"})
+        g.label = label  # type: ignore[attr-defined]
+        groups.append(g)
+    return groups
+
+
 def run_clips(
     lesson_id: uuid.UUID,
     audio_file_path: str,
     vad_segments: list[dict],
     supabase_url: str,
     service_role_key: str,
+    llm_segments: list[dict] | None = None,
 ) -> list[dict]:
     """Process audio into clips and upload to Supabase Storage.
 
@@ -192,6 +217,10 @@ def run_clips(
         Supabase project URL.
     service_role_key:
         Supabase service role key for storage uploads.
+    llm_segments:
+        Optional topic segments from the narrative LLM. When provided, each
+        segment becomes one clip with a descriptive label instead of the
+        default gap-based grouping.
 
     Returns
     -------
@@ -207,8 +236,17 @@ def run_clips(
             logger.error("Clips[%s]: audio file not found at %s", lesson_id, audio_file_path)
             return []
 
-        # Group VAD segments into clips
-        clip_groups = group_segments_into_clips(vad_segments)
+        # Use LLM topic segments when available, fall back to gap-based grouping
+        if llm_segments:
+            clip_groups = _groups_from_llm_segments(llm_segments)
+            if clip_groups:
+                logger.info("Clips[%s]: using %d LLM topic segments as clip boundaries", lesson_id, len(clip_groups))
+            else:
+                logger.warning("Clips[%s]: LLM segments invalid, falling back to gap-based grouping", lesson_id)
+                clip_groups = group_segments_into_clips(vad_segments)
+        else:
+            clip_groups = group_segments_into_clips(vad_segments)
+
         if not clip_groups:
             logger.warning("Clips[%s]: no non-silence clips found", lesson_id)
             return []
@@ -239,14 +277,20 @@ def run_clips(
                     logger.warning("Clips[%s]: skipping clip %d — upload failed", lesson_id, idx)
                     continue
 
-                metadata.append({
+                clip_meta: dict = {
                     "index": idx,
                     "start": round(group.start, 3),
                     "end": round(group.end, 3),
                     "duration": round(group.duration, 3),
                     "types": sorted(group.types - {"silence"}),
                     "url": public_url,
-                })
+                }
+                # Include LLM-generated label when available
+                label = getattr(group, "label", None)
+                if label:
+                    clip_meta["label"] = label
+
+                metadata.append(clip_meta)
 
                 # Clean up temp clip file immediately
                 try:
