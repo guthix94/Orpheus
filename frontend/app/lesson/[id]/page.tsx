@@ -20,6 +20,7 @@ import EditableAssignmentCard, {
   AddAssignmentForm,
   type Assignment,
 } from "@/components/EditableAssignmentCard";
+import AudioClips, { type Clip } from "@/components/AudioClips";
 
 /* ── Types ── */
 
@@ -36,6 +37,7 @@ interface Lesson {
   suggested_assignments:
     | { id?: string; description: string; details?: string | null }[]
     | null;
+  clips: Clip[] | null;
 }
 
 interface Student {
@@ -561,8 +563,15 @@ export default function LessonSummaryPage() {
             </div>
           )}
 
+          {/* Audio clips */}
+          {lesson?.clips && lesson.clips.length > 0 && (
+            <FadeIn delay={300}>
+              <AudioClips clips={lesson.clips} />
+            </FadeIn>
+          )}
+
           {/* Action button — Send to Parent only */}
-          <FadeIn delay={300}>
+          <FadeIn delay={350}>
             <button
               onClick={() => setModalOpen(true)}
               disabled={!parentText}
