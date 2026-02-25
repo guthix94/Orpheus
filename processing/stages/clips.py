@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -29,6 +30,13 @@ logger = logging.getLogger(__name__)
 # If the gap between two consecutive VAD segments is less than this, they
 # belong to the same clip.
 _CLIP_GAP_THRESHOLD_S = 4.0
+
+# Clips shorter than this after clamping are skipped (not worth uploading).
+_MIN_CLIP_DURATION_S = 0.5
+
+# Files smaller than this are considered empty (just container headers, no
+# real audio content).  A webm with only headers is typically ~1 KB.
+_MIN_CLIP_FILE_BYTES = 1024
 
 
 @dataclass
@@ -87,6 +95,33 @@ def group_segments_into_clips(vad_segments: list[dict]) -> list[ClipGroup]:
     return clips
 
 
+def _get_audio_duration(audio_path: str) -> float | None:
+    """Probe the actual duration of an audio file using ffmpeg.
+
+    Returns duration in seconds, or None if probing fails.
+    """
+    import imageio_ffmpeg
+
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    # Running ffmpeg with only -i (no output) prints media info to stderr.
+    cmd = [ffmpeg_path, "-i", audio_path]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=10)
+        stderr = result.stderr.decode(errors="replace")
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+)\.(\d+)", stderr)
+        if match:
+            h, m, s, frac = match.groups()
+            return (
+                int(h) * 3600
+                + int(m) * 60
+                + int(s)
+                + int(frac) / (10 ** len(frac))
+            )
+    except Exception:
+        logger.debug("Clips: failed to probe duration for %s", audio_path, exc_info=True)
+    return None
+
+
 def _slice_audio(
     audio_path: str, start: float, end: float, output_path: str
 ) -> bool:
@@ -115,9 +150,10 @@ def _slice_audio(
             logger.error("Clips: ffmpeg slice failed (rc=%d): %s", result.returncode, stderr[:500])
             return False
 
-        # Verify output exists and isn't empty
-        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            logger.error("Clips: ffmpeg produced empty output for %s [%.1f-%.1f]", audio_path, start, end)
+        # Verify output exists and has real audio content (not just
+        # container headers).  A webm with only headers is ~1 KB.
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < _MIN_CLIP_FILE_BYTES:
+            logger.error("Clips: ffmpeg produced empty/too-small output for %s [%.1f-%.1f]", audio_path, start, end)
             return False
 
         return True
@@ -249,6 +285,39 @@ def run_clips(
 
         if not clip_groups:
             logger.warning("Clips[%s]: no non-silence clips found", lesson_id)
+            return []
+
+        # --- Clamp clip boundaries to actual audio duration ---
+        audio_duration = _get_audio_duration(audio_file_path)
+        if audio_duration is not None and audio_duration > 0:
+            logger.info("Clips[%s]: audio file duration is %.1fs", lesson_id, audio_duration)
+            clamped: list[ClipGroup] = []
+            for g in clip_groups:
+                if g.start >= audio_duration:
+                    logger.warning(
+                        "Clips[%s]: dropping clip starting at %.1fs — past audio end (%.1fs)",
+                        lesson_id, g.start, audio_duration,
+                    )
+                    continue
+                if g.end > audio_duration:
+                    logger.info(
+                        "Clips[%s]: clamping clip end from %.1fs to %.1fs (audio duration)",
+                        lesson_id, g.end, audio_duration,
+                    )
+                    g.end = audio_duration
+                if g.duration < _MIN_CLIP_DURATION_S:
+                    logger.warning(
+                        "Clips[%s]: dropping clip at %.1fs — too short after clamping (%.2fs)",
+                        lesson_id, g.start, g.duration,
+                    )
+                    continue
+                clamped.append(g)
+            clip_groups = clamped
+        else:
+            logger.warning("Clips[%s]: could not probe audio duration — clips may have inaccurate durations", lesson_id)
+
+        if not clip_groups:
+            logger.warning("Clips[%s]: no clips remaining after clamping to audio duration", lesson_id)
             return []
 
         logger.info("Clips[%s]: %d clip groups from %d VAD segments", lesson_id, len(clip_groups), len(vad_segments))
