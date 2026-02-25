@@ -4,8 +4,9 @@ Takes VAD segments and groups consecutive segments into clips. Adjacent segments
 with a gap < 4 seconds belong to the same clip; gaps >= 4 seconds start a new
 clip.  Clips that contain only silence are skipped.
 
-Each clip is sliced from the original audio via ffmpeg (stream copy, no
-re-encoding) and uploaded to Supabase Storage.
+Each clip is sliced from the original audio via ffmpeg and re-encoded to
+Opus/WebM for consistent output regardless of input format (mp3, wav, m4a,
+webm, etc.).  Uploaded to Supabase Storage.
 
 Graceful degradation: any failure returns an empty list — never crashes the
 pipeline.
@@ -125,7 +126,11 @@ def _get_audio_duration(audio_path: str) -> float | None:
 def _slice_audio(
     audio_path: str, start: float, end: float, output_path: str
 ) -> bool:
-    """Slice a segment from an audio file using ffmpeg stream copy.
+    """Slice a segment from an audio file using ffmpeg.
+
+    Re-encodes to Opus/WebM so the output format is consistent regardless of
+    the input format (mp3, wav, m4a, webm, etc.).  ``-vn`` strips video
+    streams that some files embed (e.g. album art in mp3).
 
     Returns True on success, False on failure.
     """
@@ -138,7 +143,9 @@ def _slice_audio(
         "-ss", str(start),
         "-to", str(end),
         "-i", audio_path,
-        "-c", "copy",
+        "-vn",
+        "-c:a", "libopus",
+        "-b:a", "64k",
         output_path,
     ]
     logger.debug("Clips: slicing audio — %s", " ".join(cmd))
