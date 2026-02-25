@@ -10,6 +10,7 @@ export interface Clip {
   duration: number;
   types: string[];
   url: string;
+  label?: string;
 }
 
 function formatTime(seconds: number): string {
@@ -19,6 +20,7 @@ function formatTime(seconds: number): string {
 }
 
 function clipLabel(clip: Clip): string {
+  if (clip.label) return clip.label;
   const hasMusic = clip.types.includes("music");
   const hasSpeech = clip.types.includes("speech");
   if (hasMusic && hasSpeech) return "Speech + Music";

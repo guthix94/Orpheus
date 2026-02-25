@@ -18,6 +18,7 @@ class NarrativeResult:
     parent_summary: str = ""
     suggested_assignments: list[dict[str, str]] = field(default_factory=list)
     pieces_detected: list[str] = field(default_factory=list)
+    lesson_segments: list[dict] | None = None
 
 
 SYSTEM_PROMPT = """\
@@ -67,6 +68,14 @@ mistake, problem, weak, poor, bad, behind.
 
 PIECES DETECTED: Extract any piece or song names mentioned in the transcript.
 
+LESSON SEGMENTS: Divide the lesson into topic segments — natural sections like \
+"Scale warm-up", "Vivaldi - string crossings", "Sight-reading new piece", etc. \
+Each segment has a start_seconds (float, from transcript timestamps), \
+end_seconds (float), and label (short descriptive string). Segments should \
+cover the full lesson without gaps or overlaps. Use the transcript timestamps \
+to determine boundaries. Aim for 2-8 segments depending on lesson length \
+and variety.
+
 Respond in JSON format ONLY (no markdown fences):
 {
     "teacher_summary": "...",
@@ -74,6 +83,10 @@ Respond in JSON format ONLY (no markdown fences):
     "pieces_detected": ["..."],
     "suggested_assignments": [
         {"description": "...", "details": "..."}
+    ],
+    "lesson_segments": [
+        {"start_seconds": 0.0, "end_seconds": 300.0, "label": "Scale warm-up"},
+        {"start_seconds": 300.0, "end_seconds": 900.0, "label": "Vivaldi - string crossings"}
     ]
 }
 """
@@ -155,7 +168,7 @@ def generate_summaries(
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
+        max_tokens=2500,
         system=system,
         messages=[{"role": "user", "content": user_message}],
     )
@@ -171,13 +184,51 @@ def generate_summaries(
             parent_summary=raw,
         )
 
+    lesson_segments = _validate_lesson_segments(data.get("lesson_segments"))
+
     return NarrativeResult(
         teacher_summary=data.get("teacher_summary", ""),
         teacher_summary_formal=data.get("teacher_summary_formal"),
         parent_summary=data.get("parent_summary", ""),
         suggested_assignments=data.get("suggested_assignments", []),
         pieces_detected=data.get("pieces_detected", []),
+        lesson_segments=lesson_segments,
     )
+
+
+def _validate_lesson_segments(raw_segments: object) -> list[dict] | None:
+    """Validate and normalize lesson_segments from the LLM response.
+
+    Returns a list of validated segment dicts, or None if the data is missing
+    or malformed.  Never raises — always degrades gracefully.
+    """
+    if not isinstance(raw_segments, list) or len(raw_segments) == 0:
+        return None
+
+    validated: list[dict] = []
+    for seg in raw_segments:
+        if not isinstance(seg, dict):
+            logger.warning("Narrative: skipping non-dict lesson segment: %s", seg)
+            continue
+        try:
+            start = float(seg["start_seconds"])
+            end = float(seg["end_seconds"])
+            label = str(seg.get("label", "")).strip()
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("Narrative: skipping malformed lesson segment %s: %s", seg, exc)
+            continue
+
+        if end <= start or not label:
+            logger.warning("Narrative: skipping invalid segment (start=%.1f end=%.1f label=%r)", start, end, label)
+            continue
+
+        validated.append({
+            "start_seconds": round(start, 3),
+            "end_seconds": round(end, 3),
+            "label": label,
+        })
+
+    return validated if validated else None
 
 
 def _parse_json_response(raw: str) -> dict | None:
