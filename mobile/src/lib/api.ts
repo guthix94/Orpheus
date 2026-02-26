@@ -1,0 +1,207 @@
+/**
+ * API client for the Orpheus backend.
+ *
+ * Mirrors the web client's auth header pattern:
+ *   Authorization: Bearer <supabase_access_token>
+ *
+ * All endpoints are prefixed with /api on the server.
+ */
+
+import { supabase } from "./supabase";
+import { ENV } from "./env";
+
+const API_BASE = ENV.API_URL;
+
+// ── Types ───────────────────────────────────────────────────────────────
+
+export interface Student {
+  id: string;
+  teacher_id: string;
+  name: string;
+  instrument: string;
+  created_at: string;
+  current_pieces: string[] | null;
+  estimated_level: string | null;
+  notes: string | null;
+  parent_email: string | null;
+  parent_phone: string | null;
+  parent_portal_token: string | null;
+}
+
+export interface Lesson {
+  id: string;
+  student_id: string;
+  teacher_id: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  audio_file_path: string | null;
+  status: string;
+  summary_style: string;
+  pieces_detected: string[] | null;
+  teacher_summary: string | null;
+  teacher_summary_formal: string | null;
+  parent_summary: string | null;
+  suggested_assignments: Record<string, unknown>[] | null;
+  processing_metadata: Record<string, unknown> | null;
+  timeline_json: Record<string, unknown> | null;
+  clips: Record<string, unknown>[] | null;
+  confirmed_at: string | null;
+  is_locked: boolean;
+}
+
+export interface Profile {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+  return {};
+}
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const auth = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...auth,
+      ...options?.headers,
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function uploadFile<T>(
+  path: string,
+  fileUri: string,
+  filename: string,
+  mimeType: string
+): Promise<T> {
+  const auth = await getAuthHeaders();
+  const form = new FormData();
+  form.append("file", {
+    uri: fileUri,
+    name: filename,
+    type: mimeType,
+  } as unknown as Blob);
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { ...auth },
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ── Endpoints ───────────────────────────────────────────────────────────
+
+export async function getProfile(): Promise<Profile> {
+  return api<Profile>("/api/me");
+}
+
+export async function listStudents(): Promise<Student[]> {
+  return api<Student[]>("/api/students");
+}
+
+export async function getStudent(studentId: string): Promise<Student> {
+  return api<Student>(`/api/students/${studentId}`);
+}
+
+/**
+ * List lessons, optionally filtered by student and/or status.
+ * Results are ordered by started_at descending (most recent first).
+ */
+export async function listLessons(params?: {
+  studentId?: string;
+  status?: string;
+}): Promise<Lesson[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.studentId) searchParams.set("student_id", params.studentId);
+  if (params?.status) searchParams.set("lesson_status", params.status);
+  const qs = searchParams.toString();
+  return api<Lesson[]>(`/api/lessons${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * Get a student's most recent completed lesson.
+ * Uses the list endpoint with status filter, returns the first result.
+ */
+export async function getLatestCompletedLesson(
+  studentId: string
+): Promise<Lesson | null> {
+  const lessons = await listLessons({
+    studentId,
+    status: "completed",
+  });
+  return lessons.length > 0 ? lessons[0] : null;
+}
+
+/**
+ * Create a new lesson record (step 1 of the recording flow).
+ * Sets status to "recording".
+ */
+export async function startLesson(
+  studentId: string,
+  summaryStyle: string = "standard"
+): Promise<Lesson> {
+  return api<Lesson>("/api/lessons", {
+    method: "POST",
+    body: JSON.stringify({
+      student_id: studentId,
+      summary_style: summaryStyle,
+    }),
+  });
+}
+
+/**
+ * Stop a lesson (step 2 — sets status to "processing").
+ */
+export async function stopLesson(lessonId: string): Promise<Lesson> {
+  return api<Lesson>(`/api/lessons/${lessonId}/stop`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+/**
+ * Upload audio for a lesson (step 3 — triggers processing pipeline).
+ * The backend expects a multipart form with field name "file".
+ */
+export async function uploadLessonAudio(
+  lessonId: string,
+  fileUri: string,
+  filename: string,
+  mimeType: string = "audio/m4a"
+): Promise<Lesson> {
+  return uploadFile<Lesson>(
+    `/api/lessons/${lessonId}/upload-audio`,
+    fileUri,
+    filename,
+    mimeType
+  );
+}
+
+/**
+ * Get a single lesson by ID (for polling status).
+ */
+export async function getLesson(lessonId: string): Promise<Lesson> {
+  return api<Lesson>(`/api/lessons/${lessonId}`);
+}
