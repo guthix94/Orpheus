@@ -18,6 +18,7 @@ logging.basicConfig(
 
 from server.api.assignments import router as assignments_router
 from server.api.lessons import router as lessons_router
+from server.api.parent_portal import router as parent_portal_router
 from server.api.parents import router as parents_router
 from server.api.students import router as students_router
 from server.config import settings
@@ -75,6 +76,7 @@ app.include_router(students_router, prefix="/api")
 app.include_router(lessons_router, prefix="/api")
 app.include_router(parents_router, prefix="/api")
 app.include_router(assignments_router, prefix="/api")
+app.include_router(parent_portal_router, prefix="/api")
 
 
 @app.get("/health")

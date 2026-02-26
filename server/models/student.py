@@ -27,3 +27,6 @@ class Student(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     parent_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    parent_portal_token: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, unique=True, index=True
+    )
