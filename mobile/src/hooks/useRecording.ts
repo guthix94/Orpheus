@@ -57,6 +57,11 @@ const MUSIC_RECORDING_OPTIONS: RecordingOptions = {
 export function useRecording(): RecordingState & RecordingActions {
   const recorder = useAudioRecorder(MUSIC_RECORDING_OPTIONS);
 
+  // Track recording state locally because recorder.isRecording is a native
+  // property that does NOT trigger React re-renders. The separate
+  // useAudioRecorderState() hook exists for reactive state, but using local
+  // state is simpler and avoids polling overhead.
+  const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [audioUri, setAudioUri] = useState<string | null>(null);
@@ -105,33 +110,39 @@ export function useRecording(): RecordingState & RecordingActions {
       });
 
       recorder.record();
+      setIsRecording(true);
       startTimer();
+      console.log("[useRecording] Recording started");
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Failed to start recording";
       setError(msg);
-      console.error("Recording start error:", err);
+      console.error("[useRecording] Recording start error:", err);
     }
   }, [recorder, startTimer]);
 
   const stopRecording = useCallback(async (): Promise<string | null> => {
+    console.log("[useRecording] stopRecording called");
     try {
       stopTimer();
+      setIsRecording(false);
+      console.log("[useRecording] Calling recorder.stop()...");
       await recorder.stop();
       const uri = recorder.uri;
+      console.log("[useRecording] Recording stopped, uri:", uri);
       setAudioUri(uri ?? null);
       return uri ?? null;
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Failed to stop recording";
       setError(msg);
-      console.error("Recording stop error:", err);
+      console.error("[useRecording] Recording stop error:", err);
       return null;
     }
   }, [recorder, stopTimer]);
 
   return {
-    isRecording: recorder.isRecording,
+    isRecording,
     elapsed,
     error,
     audioUri,

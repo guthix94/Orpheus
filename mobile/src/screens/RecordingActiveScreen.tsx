@@ -89,12 +89,18 @@ export default function RecordingActiveScreen({ route, navigation }: Props) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStop = useCallback(async () => {
-    if (!lessonId) return;
+    console.log("[RecordingActive] handleStop called, lessonId:", lessonId);
+    if (!lessonId) {
+      console.warn("[RecordingActive] handleStop aborted — lessonId is null");
+      return;
+    }
 
     setUploading(true);
     try {
       // Step 1: Stop recording, get audio file URI
+      console.log("[RecordingActive] Stopping recording...");
       const audioUri = await stopRecording();
+      console.log("[RecordingActive] audioUri:", audioUri);
       if (!audioUri) {
         Alert.alert("Error", "No audio was recorded.");
         setUploading(false);
@@ -102,13 +108,16 @@ export default function RecordingActiveScreen({ route, navigation }: Props) {
       }
 
       // Step 2: Stop lesson on backend (status → "processing")
+      console.log("[RecordingActive] Stopping lesson on backend...");
       await stopLesson(lessonId);
 
       // Step 3: Upload audio (triggers processing pipeline)
+      console.log("[RecordingActive] Uploading audio...");
       const filename = `${lessonId}.m4a`;
       await uploadLessonAudio(lessonId, audioUri, filename, "audio/m4a");
 
       // Step 4: Navigate to processing screen
+      console.log("[RecordingActive] Navigating to Processing screen");
       navigation.replace("Processing", {
         lessonId,
         studentName,
@@ -117,6 +126,7 @@ export default function RecordingActiveScreen({ route, navigation }: Props) {
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Failed to save lesson";
+      console.error("[RecordingActive] handleStop error:", err);
       Alert.alert("Upload Error", msg);
       setUploading(false);
     }
@@ -177,7 +187,6 @@ export default function RecordingActiveScreen({ route, navigation }: Props) {
       <TouchableOpacity
         style={styles.stopButton}
         onPress={handleStop}
-        disabled={!isRecording}
       >
         <View style={styles.stopButtonInner} />
       </TouchableOpacity>
