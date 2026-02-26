@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Mic, Mail } from "lucide-react";
+import { ArrowLeft, Check, Copy, Link as LinkIcon, Loader2, Mic, Mail } from "lucide-react";
 import { api } from "@/lib/api";
 import FadeIn from "@/components/ui/FadeIn";
 import LessonCard, { LessonCardSkeleton } from "@/components/LessonCard";
@@ -25,6 +25,7 @@ interface Student {
   estimated_level?: string | null;
   parent_email?: string | null;
   parent_phone?: string | null;
+  parent_portal_token?: string | null;
   created_at: string;
 }
 
@@ -118,6 +119,8 @@ export default function StudentProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("lessons");
+  const [generatingToken, setGeneratingToken] = useState(false);
+  const [portalCopied, setPortalCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,6 +147,31 @@ export default function StudentProfilePage() {
       cancelled = true;
     };
   }, [id]);
+
+  const handleGeneratePortalToken = async () => {
+    setGeneratingToken(true);
+    try {
+      const res = await api<{ parent_portal_token: string }>(
+        `/api/students/${id}/portal-token`,
+        { method: "POST" },
+      );
+      setStudent((prev) =>
+        prev ? { ...prev, parent_portal_token: res.parent_portal_token } : prev,
+      );
+    } catch {
+      // Silently fail — button stays visible for retry
+    } finally {
+      setGeneratingToken(false);
+    }
+  };
+
+  const handleCopyPortalLink = async () => {
+    if (!student?.parent_portal_token) return;
+    const url = `${window.location.origin}/parent/${student.parent_portal_token}`;
+    await navigator.clipboard.writeText(url);
+    setPortalCopied(true);
+    setTimeout(() => setPortalCopied(false), 2000);
+  };
 
   if (error) {
     return (
@@ -252,6 +280,56 @@ export default function StudentProfilePage() {
                     <Mail size={16} className="text-stone" />
                     Message Parent
                   </a>
+                )}
+              </div>
+
+              {/* Parent Portal Link */}
+              <div className="mt-5 border-t border-sand pt-4">
+                <p className="text-xs font-semibold uppercase tracking-widest text-stone">
+                  Parent Portal
+                </p>
+                {student.parent_portal_token ? (
+                  <div className="mt-2.5 space-y-2">
+                    <p className="break-all rounded-[var(--radius-button)] bg-ivory px-3 py-2 text-xs text-stone">
+                      {typeof window !== "undefined"
+                        ? `${window.location.origin}/parent/${student.parent_portal_token}`
+                        : `/parent/${student.parent_portal_token}`}
+                    </p>
+                    <button
+                      onClick={handleCopyPortalLink}
+                      className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] border border-sand bg-cream px-4 py-2.5 text-sm font-semibold text-charcoal transition-shadow hover:shadow-card-hover"
+                    >
+                      {portalCopied ? (
+                        <>
+                          <Check size={16} className="text-success" />
+                          Copied!
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={16} className="text-stone" />
+                          Copy Link
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-2.5">
+                    <p className="text-xs text-stone">
+                      Generate a link so parents can view lesson summaries and shared audio clips.
+                    </p>
+                    <button
+                      onClick={handleGeneratePortalToken}
+                      disabled={generatingToken}
+                      className="mt-2 flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] border border-sand bg-cream px-4 py-2.5 text-sm font-semibold text-charcoal transition-shadow hover:shadow-card-hover disabled:opacity-50"
+                    >
+                      {generatingToken ? (
+                        <Loader2 size={16} className="animate-spin text-stone" />
+                      ) : (
+                        <LinkIcon size={16} className="text-stone" />
+                      )}
+                      Generate Parent Portal Link
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
