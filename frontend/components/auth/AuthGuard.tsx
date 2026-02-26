@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 
 const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PREFIXES = ["/parent"];
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -18,7 +19,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s);
-      if (!s && !PUBLIC_PATHS.includes(pathname)) {
+      const isPublic = PUBLIC_PATHS.includes(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
+      if (!s && !isPublic) {
         router.replace("/login");
       }
     });
@@ -28,7 +30,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
-      if (!s && !PUBLIC_PATHS.includes(pathname)) {
+      const isPublic = PUBLIC_PATHS.includes(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
+      if (!s && !isPublic) {
         router.replace("/login");
       }
     });
@@ -37,7 +40,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [pathname, router]);
 
   // Still loading auth state
-  if (session === undefined && !PUBLIC_PATHS.includes(pathname)) {
+  const isPublicPath = PUBLIC_PATHS.includes(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
+  if (session === undefined && !isPublicPath) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-cream">
         <div className="text-center">
