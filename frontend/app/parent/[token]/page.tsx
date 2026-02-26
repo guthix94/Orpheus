@@ -134,8 +134,10 @@ function PortalAudioPlayer({
 }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(clip.duration);
+  const [isSeeking, setIsSeeking] = useState(false);
   const elRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number>(0);
+  const barRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = elRef.current;
@@ -161,12 +163,12 @@ function PortalAudioPlayer({
       return;
     }
     const tick = () => {
-      setCurrentTime(el.currentTime);
+      if (!isSeeking) setCurrentTime(el.currentTime);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying]);
+  }, [isPlaying, isSeeking]);
 
   useEffect(() => {
     const el = elRef.current;
@@ -175,6 +177,39 @@ function PortalAudioPlayer({
     el.addEventListener("ended", onEnded);
     return () => el.removeEventListener("ended", onEnded);
   }, []);
+
+  const seek = useCallback(
+    (clientX: number) => {
+      const el = elRef.current;
+      if (!el || !barRef.current) return;
+      const rect = barRef.current.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const newTime = ratio * duration;
+      el.currentTime = newTime;
+      setCurrentTime(newTime);
+    },
+    [duration],
+  );
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      setIsSeeking(true);
+      seek(e.clientX);
+
+      const onMove = (ev: PointerEvent) => seek(ev.clientX);
+      const onUp = (ev: PointerEvent) => {
+        seek(ev.clientX);
+        setIsSeeking(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [seek],
+  );
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -198,7 +233,29 @@ function PortalAudioPlayer({
           <span className="w-8 text-right text-[10px] tabular-nums text-stone">
             {formatTime(currentTime)}
           </span>
-          <div className="relative h-1.5 flex-1 rounded-full bg-ivory">
+          <div
+            ref={barRef}
+            onPointerDown={handlePointerDown}
+            className="relative h-1.5 flex-1 cursor-pointer rounded-full bg-ivory"
+            role="slider"
+            aria-label="Seek audio"
+            aria-valuenow={Math.round(currentTime)}
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration)}
+            tabIndex={0}
+            onKeyDown={(e) => {
+              const el = elRef.current;
+              if (!el) return;
+              const step = 5;
+              if (e.key === "ArrowRight") {
+                el.currentTime = Math.min(duration, el.currentTime + step);
+                setCurrentTime(el.currentTime);
+              } else if (e.key === "ArrowLeft") {
+                el.currentTime = Math.max(0, el.currentTime - step);
+                setCurrentTime(el.currentTime);
+              }
+            }}
+          >
             <div
               className="absolute inset-y-0 left-0 rounded-full bg-amber transition-[width] duration-75"
               style={{ width: `${progress}%` }}

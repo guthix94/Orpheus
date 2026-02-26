@@ -293,6 +293,39 @@ async def delete_lesson_assignment(
     return lesson
 
 
+# ── Clip sharing toggle ──
+
+
+@router.patch("/{lesson_id}/clips/{clip_index}/share", response_model=LessonResponse)
+async def toggle_clip_share(
+    lesson_id: uuid.UUID,
+    clip_index: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Lesson:
+    """Toggle the shared_with_parent flag on a specific clip."""
+    result = await db.execute(
+        select(Lesson).where(
+            Lesson.id == lesson_id,
+            Lesson.teacher_id == user.id,
+        )
+    )
+    lesson = result.scalar_one_or_none()
+    if lesson is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+
+    clips = list(lesson.clips or [])
+    if clip_index < 0 or clip_index >= len(clips):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
+
+    clips[clip_index]["shared_with_parent"] = not clips[clip_index].get("shared_with_parent", False)
+    lesson.clips = clips
+
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
+
+
 # ── Orphaned lesson recovery ──
 
 
