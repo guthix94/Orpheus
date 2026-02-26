@@ -13,6 +13,10 @@
  * IMPORTANT: Background recording requires a development build (not Expo Go).
  * The expo-audio config plugin adds FOREGROUND_SERVICE_MICROPHONE on Android
  * and UIBackgroundModes: ['audio'] on iOS.
+ *
+ * API note: expo-audio requires prepareToRecordAsync() before record().
+ * Skipping prepare leaves the native recorder without an output file,
+ * causing recorder.uri to be empty after stop().
  */
 
 import { useRef, useState, useCallback, useEffect } from "react";
@@ -23,6 +27,8 @@ import {
   setAudioModeAsync,
   type RecordingOptions,
 } from "expo-audio";
+
+const TAG = "[useRecording]";
 
 interface RecordingState {
   isRecording: boolean;
@@ -93,13 +99,16 @@ export function useRecording(): RecordingState & RecordingActions {
       setError(null);
       setAudioUri(null);
 
+      console.log(TAG, "Requesting microphone permission...");
       const permStatus = await requestRecordingPermissionsAsync();
+      console.log(TAG, "Permission status:", permStatus.status, "granted:", permStatus.granted);
       if (!permStatus.granted) {
         setError("Microphone permission is required to record lessons.");
         return;
       }
 
       // Configure audio mode for background recording
+      console.log(TAG, "Setting audio mode...");
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
@@ -108,38 +117,53 @@ export function useRecording(): RecordingState & RecordingActions {
         interruptionMode: "doNotMix",
         shouldRouteThroughEarpiece: false,
       });
+      console.log(TAG, "Audio mode set");
 
+      // Prepare the native recorder — allocates the output file and configures
+      // the encoder. Without this step recorder.uri is empty after stop().
+      console.log(TAG, "Preparing recorder with options:", JSON.stringify(MUSIC_RECORDING_OPTIONS));
+      await recorder.prepareToRecordAsync(MUSIC_RECORDING_OPTIONS);
+      console.log(TAG, "Recorder prepared, uri after prepare:", recorder.uri);
+
+      console.log(TAG, "Calling recorder.record()...");
       recorder.record();
       setIsRecording(true);
       startTimer();
-      console.log("[useRecording] Recording started");
+      console.log(TAG, "Recording started successfully");
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Failed to start recording";
       setError(msg);
-      console.error("[useRecording] Recording start error:", err);
+      console.error(TAG, "Recording start error:", err);
     }
   }, [recorder, startTimer]);
 
   const stopRecording = useCallback(async (): Promise<string | null> => {
-    console.log("[useRecording] stopRecording called");
+    console.log(TAG, "stopRecording called, isRecording:", isRecording);
     try {
       stopTimer();
       setIsRecording(false);
-      console.log("[useRecording] Calling recorder.stop()...");
+
+      console.log(TAG, "Calling recorder.stop()...");
       await recorder.stop();
+
       const uri = recorder.uri;
-      console.log("[useRecording] Recording stopped, uri:", uri);
+      console.log(TAG, "Recording stopped, uri:", uri);
+
+      if (!uri) {
+        console.warn(TAG, "recorder.uri is empty after stop — recording may not have been prepared");
+      }
+
       setAudioUri(uri ?? null);
       return uri ?? null;
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Failed to stop recording";
       setError(msg);
-      console.error("[useRecording] Recording stop error:", err);
+      console.error(TAG, "Recording stop error:", err);
       return null;
     }
-  }, [recorder, stopTimer]);
+  }, [recorder, stopTimer, isRecording]);
 
   return {
     isRecording,
