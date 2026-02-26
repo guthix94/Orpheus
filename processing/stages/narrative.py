@@ -66,7 +66,19 @@ NEVER address the student directly — this message goes to the parent.
 NEVER use these words in the parent summary: struggled, failed, couldn't, wrong,
 mistake, problem, weak, poor, bad, behind.
 
-PIECES DETECTED: Extract any piece or song names mentioned in the transcript.
+PIECES DETECTED: List ONLY pieces the student actually PLAYED or PRACTICED \
+during this lesson. Do NOT include pieces mentioned merely as references, \
+comparisons, or examples (e.g., if the teacher says "this passage is similar \
+to the Chopin Etude", do not list the Chopin Etude unless the student played it).
+
+Use short, clean piece names as a musician would say them — e.g., \
+"Vivaldi Concerto in A minor", "Courante", "A minor scale", \
+"Kreutzer Etude No. 8". Never add parenthetical descriptions or analysis \
+to piece names (no "Bach piece (with inversion and deceptive cadence)", \
+no "Clavichord piece (unspecified)"). If the exact piece cannot be identified, \
+use the most specific short name possible (e.g., "Clavichord piece" not \
+"Clavichord piece (unspecified)"). Scales and exercises count as pieces. \
+Do not list the same piece twice with different descriptions.
 
 LESSON SEGMENTS: Divide the lesson into topic segments — natural sections like \
 "Scale warm-up", "Vivaldi - string crossings", "Sight-reading new piece", etc. \
