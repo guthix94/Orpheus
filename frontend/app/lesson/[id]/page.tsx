@@ -44,6 +44,7 @@ interface Student {
   id: string;
   name: string;
   parent_email: string | null;
+  parent_portal_token: string | null;
 }
 
 type SummaryTab = "teacher" | "parent";
@@ -333,6 +334,33 @@ export default function LessonSummaryPage() {
     }
   };
 
+  /* ── Clip sharing toggle ── */
+
+  const handleToggleClipShare = async (clipIndex: number) => {
+    const originalClips = lesson?.clips;
+    // Optimistic update
+    setLesson((prev) => {
+      if (!prev || !prev.clips) return prev;
+      const updated = prev.clips.map((c) =>
+        c.index === clipIndex
+          ? { ...c, shared_with_parent: !c.shared_with_parent }
+          : c,
+      );
+      return { ...prev, clips: updated };
+    });
+    try {
+      const updated = await api<Lesson>(
+        `/api/lessons/${id}/clips/${clipIndex}/share`,
+        { method: "PATCH" },
+      );
+      if (updated?.clips) setLesson(updated);
+    } catch {
+      // Revert
+      setLesson((prev) => (prev ? { ...prev, clips: originalClips ?? null } : prev));
+      setToast({ message: "Failed to update clip sharing", type: "error" });
+    }
+  };
+
   // Derived data
   const teacherText = lesson
     ? extractText(lesson.teacher_summary, "teacher_summary")
@@ -566,7 +594,11 @@ export default function LessonSummaryPage() {
           {/* Audio clips */}
           {lesson?.clips && lesson.clips.length > 0 && (
             <FadeIn delay={300}>
-              <AudioClips clips={lesson.clips} />
+              <AudioClips
+                clips={lesson.clips}
+                showShareToggle={!!student?.parent_portal_token}
+                onToggleShare={handleToggleClipShare}
+              />
             </FadeIn>
           )}
 

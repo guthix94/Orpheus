@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pause, Play, Volume2 } from "lucide-react";
+import { Globe, Pause, Play, Volume2 } from "lucide-react";
 
 export interface Clip {
   index: number;
@@ -11,6 +11,7 @@ export interface Clip {
   types: string[];
   url: string;
   label?: string;
+  shared_with_parent?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -172,7 +173,15 @@ function ProgressBar({
   );
 }
 
-export default function AudioClips({ clips }: { clips: Clip[] }) {
+export default function AudioClips({
+  clips,
+  showShareToggle = false,
+  onToggleShare,
+}: {
+  clips: Clip[];
+  showShareToggle?: boolean;
+  onToggleShare?: (clipIndex: number) => void;
+}) {
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
   const audioRefs = useRef<Map<number, HTMLAudioElement>>(new Map());
 
@@ -265,6 +274,33 @@ export default function AudioClips({ clips }: { clips: Clip[] }) {
                   </span>
                 </p>
               </div>
+
+              {/* Share toggle */}
+              {showShareToggle && onToggleShare && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleShare(clip.index);
+                  }}
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors ${
+                    clip.shared_with_parent
+                      ? "bg-amber-glow text-amber"
+                      : "text-mist hover:bg-ivory hover:text-stone"
+                  }`}
+                  aria-label={
+                    clip.shared_with_parent
+                      ? "Stop sharing with parent"
+                      : "Share with parent"
+                  }
+                  title={
+                    clip.shared_with_parent
+                      ? "Shared on parent portal"
+                      : "Share on parent portal"
+                  }
+                >
+                  <Globe size={14} />
+                </button>
+              )}
             </div>
 
             {/* Progress bar with seek and time display */}

@@ -90,7 +90,10 @@ async def get_portal_lessons(
             parent_summary=lesson.parent_summary,
             suggested_assignments=lesson.suggested_assignments,
             pieces_detected=lesson.pieces_detected,
-            clips=lesson.clips,
+            clips=[
+                clip for clip in (lesson.clips or [])
+                if clip.get("shared_with_parent", False)
+            ],
             started_at=lesson.started_at,
             duration_seconds=lesson.duration_seconds,
         )

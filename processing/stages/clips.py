@@ -480,6 +480,7 @@ def run_clips(
                     "duration": round(group.duration, 3),
                     "types": sorted(group.types - {"silence"}),
                     "url": public_url,
+                    "shared_with_parent": False,
                 }
                 # Include LLM-generated label when available
                 label = getattr(group, "label", None)
