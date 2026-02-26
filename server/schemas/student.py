@@ -35,5 +35,12 @@ class StudentResponse(BaseModel):
     notes: str | None = None
     parent_email: str | None = None
     parent_phone: str | None = None
+    parent_portal_token: uuid.UUID | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class PortalTokenResponse(BaseModel):
+    parent_portal_token: uuid.UUID
 
     model_config = {"from_attributes": True}
