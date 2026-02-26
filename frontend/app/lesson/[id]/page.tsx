@@ -5,6 +5,9 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
+  Check,
+  Copy,
+  ExternalLink,
   Loader2,
   Music,
   Pencil,
@@ -112,6 +115,9 @@ export default function LessonSummaryPage() {
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  // Portal link
+  const [portalCopied, setPortalCopied] = useState(false);
 
   // Saving spinners
   const [savingPieces, setSavingPieces] = useState(false);
@@ -361,6 +367,14 @@ export default function LessonSummaryPage() {
     }
   };
 
+  const handleCopyPortalLink = async () => {
+    if (!student?.parent_portal_token) return;
+    const url = `${window.location.origin}/parent/${student.parent_portal_token}`;
+    await navigator.clipboard.writeText(url);
+    setPortalCopied(true);
+    setTimeout(() => setPortalCopied(false), 2000);
+  };
+
   // Derived data
   const teacherText = lesson
     ? extractText(lesson.teacher_summary, "teacher_summary")
@@ -602,8 +616,42 @@ export default function LessonSummaryPage() {
             </FadeIn>
           )}
 
-          {/* Action button — Send to Parent only */}
-          <FadeIn delay={350}>
+          {/* Parent portal link */}
+          {student?.parent_portal_token && (
+            <FadeIn delay={350}>
+              <button
+                onClick={handleCopyPortalLink}
+                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] border border-sand bg-cream px-5 py-3 text-sm font-semibold text-charcoal transition-shadow hover:shadow-card-hover"
+              >
+                {portalCopied ? (
+                  <>
+                    <Check size={15} className="text-success" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy size={15} className="text-stone" />
+                    Copy Parent Portal Link
+                  </>
+                )}
+              </button>
+            </FadeIn>
+          )}
+
+          {!student?.parent_portal_token && student && (
+            <FadeIn delay={350}>
+              <Link
+                href={`/students/${student.id}`}
+                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] border border-sand bg-cream px-5 py-3 text-sm font-semibold text-charcoal transition-shadow hover:shadow-card-hover"
+              >
+                <ExternalLink size={15} className="text-stone" />
+                Set Up Parent Portal
+              </Link>
+            </FadeIn>
+          )}
+
+          {/* Action button — Send to Parent */}
+          <FadeIn delay={400}>
             <button
               onClick={() => setModalOpen(true)}
               disabled={!parentText}

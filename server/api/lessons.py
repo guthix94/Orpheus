@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from server.auth import AuthenticatedUser, get_current_user
 from server.config import settings
@@ -320,6 +321,7 @@ async def toggle_clip_share(
 
     clips[clip_index]["shared_with_parent"] = not clips[clip_index].get("shared_with_parent", False)
     lesson.clips = clips
+    flag_modified(lesson, "clips")
 
     await db.commit()
     await db.refresh(lesson)

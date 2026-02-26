@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Globe, Pause, Play, Volume2 } from "lucide-react";
+import { Check, Pause, Play, Volume2 } from "lucide-react";
 
 export interface Clip {
   index: number;
@@ -275,30 +275,32 @@ export default function AudioClips({
                 </p>
               </div>
 
-              {/* Share toggle */}
+              {/* Share with parent checkbox */}
               {showShareToggle && onToggleShare && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleShare(clip.index);
                   }}
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    clip.shared_with_parent
-                      ? "bg-amber-glow text-amber"
-                      : "text-mist hover:bg-ivory hover:text-stone"
-                  }`}
+                  className="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-chip)] px-2 py-1 text-[11px] font-medium transition-colors select-none hover:bg-ivory"
                   aria-label={
                     clip.shared_with_parent
                       ? "Stop sharing with parent"
                       : "Share with parent"
                   }
-                  title={
-                    clip.shared_with_parent
-                      ? "Shared on parent portal"
-                      : "Share on parent portal"
-                  }
                 >
-                  <Globe size={14} />
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                      clip.shared_with_parent
+                        ? "border-amber bg-amber text-white"
+                        : "border-mist bg-white"
+                    }`}
+                  >
+                    {clip.shared_with_parent && <Check size={10} strokeWidth={3} />}
+                  </span>
+                  <span className={clip.shared_with_parent ? "text-charcoal" : "text-stone"}>
+                    Share with parent
+                  </span>
                 </button>
               )}
             </div>
