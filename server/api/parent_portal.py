@@ -34,9 +34,9 @@ def _fetch_teacher_name(teacher_id: uuid.UUID) -> str | None:
         if resp.status_code != 200:
             return None
         data = resp.json()
-        # Try user_metadata.full_name, then email as fallback
+        # Try user_metadata.display_name first, then full_name, then email
         meta = data.get("user_metadata") or {}
-        return meta.get("full_name") or meta.get("name") or data.get("email")
+        return meta.get("display_name") or meta.get("full_name") or meta.get("name") or data.get("email")
     except Exception:
         logger.warning("Failed to fetch teacher name for %s", teacher_id, exc_info=True)
         return None
