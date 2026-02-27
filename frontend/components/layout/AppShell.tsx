@@ -20,6 +20,8 @@ export default function AppShell({ children }: AppShellProps) {
           md:ml-[var(--spacing-sidebar)]
           pt-6 px-5 pb-24
           md:pt-8 md:px-8 md:pb-8
+          [padding-bottom:calc(6rem+env(safe-area-inset-bottom))]
+          md:[padding-bottom:2rem]
         `}
       >
         <div className="max-w-4xl mx-auto">
