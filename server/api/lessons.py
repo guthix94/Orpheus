@@ -72,7 +72,13 @@ async def stop_lesson(
 
     now = datetime.now(timezone.utc)
     lesson.ended_at = now
-    lesson.duration_seconds = int((now - lesson.started_at).total_seconds())
+    # Prefer client-provided duration (the mobile/web timer tracks actual
+    # recording time).  Fall back to server-side timestamp arithmetic with
+    # round() instead of int() to avoid truncation to 0 for short lessons.
+    if body.duration_seconds and body.duration_seconds > 0:
+        lesson.duration_seconds = body.duration_seconds
+    else:
+        lesson.duration_seconds = round((now - lesson.started_at).total_seconds())
     lesson.status = "processing"
 
     await db.commit()

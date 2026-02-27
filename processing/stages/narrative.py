@@ -159,9 +159,12 @@ def generate_summaries(
         system += FORMAL_ADDENDUM
 
     duration_str = ""
-    if duration_seconds:
-        mins = duration_seconds // 60
-        duration_str = f"\nLesson duration: {mins} minutes"
+    if duration_seconds and duration_seconds > 0:
+        if duration_seconds >= 60:
+            mins = duration_seconds // 60
+            duration_str = f"\nLesson duration: {mins} minutes"
+        else:
+            duration_str = f"\nLesson duration: {duration_seconds} seconds"
 
     prev_context_block = ""
     if previous_lesson_context:

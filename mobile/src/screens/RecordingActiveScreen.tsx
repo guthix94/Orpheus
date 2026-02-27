@@ -108,8 +108,9 @@ export default function RecordingActiveScreen({ route, navigation }: Props) {
       }
 
       // Step 2: Stop lesson on backend (status → "processing")
+      // Send client-measured elapsed time so the server stores an accurate duration
       console.log("[RecordingActive] Stopping lesson on backend...");
-      await stopLesson(lessonId);
+      await stopLesson(lessonId, elapsed);
 
       // Step 3: Upload audio (triggers processing pipeline)
       console.log("[RecordingActive] Uploading audio...");
@@ -130,7 +131,7 @@ export default function RecordingActiveScreen({ route, navigation }: Props) {
       Alert.alert("Upload Error", msg);
       setUploading(false);
     }
-  }, [lessonId, stopRecording, navigation, studentName, studentIndex]);
+  }, [lessonId, elapsed, stopRecording, navigation, studentName, studentIndex]);
 
   if (initError) {
     return (
