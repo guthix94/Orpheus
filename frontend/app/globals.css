@@ -148,6 +148,11 @@ h1, h2, h3 {
   background: var(--color-stone);
 }
 
+/* ─── Suppress Android default blue tap highlight ─── */
+button, a {
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* ─── Focus ring utility ─── */
 *:focus-visible {
   outline: 2px solid var(--color-amber);

@@ -246,19 +246,19 @@ export default function AudioClips({
               {/* Play / Pause button */}
               <button
                 onClick={() => togglePlay(clip.index)}
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber/40 ${
                   playingIndex === clip.index
-                    ? "bg-amber text-white"
-                    : "bg-ivory text-charcoal hover:bg-amber-glow hover:text-amber"
+                    ? "bg-amber text-white active:bg-amber-light"
+                    : "bg-ivory text-charcoal hover:bg-amber-glow hover:text-amber active:bg-amber-glow"
                 }`}
                 aria-label={
                   playingIndex === clip.index ? "Pause clip" : "Play clip"
                 }
               >
                 {playingIndex === clip.index ? (
-                  <Pause size={14} />
+                  <Pause size={14} fill="currentColor" />
                 ) : (
-                  <Play size={14} className="ml-0.5" />
+                  <Play size={14} fill="currentColor" className="ml-0.5" />
                 )}
               </button>
 
