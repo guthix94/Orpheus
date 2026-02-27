@@ -106,8 +106,18 @@ Segment types: "warmup", "run_through", "focused_practice", "sight_reading", \
 
 Within each segment, identify individual clips from the MUSIC segments. Each \
 clip corresponds to a distinct musical moment — a single attempt, a teacher \
-demo, a run-through, etc. Use the MUSIC-N labels from the timeline to set \
-precise start_seconds and end_seconds for each clip.
+demo, a run-through, etc.
+
+CRITICAL — clip boundaries: Reference the MUSIC-N segments from the timeline \
+using "music_refs" (a list of MUSIC-N strings). Do NOT invent timestamps for \
+clips. Each clip's audio boundaries will be derived from the referenced MUSIC \
+segments' exact start/end times.
+
+For a clip covering a single music segment: "music_refs": ["MUSIC-5"]
+For a clip spanning multiple consecutive segments (e.g., a drill with \
+speech between attempts): "music_refs": ["MUSIC-5", "MUSIC-6"]
+The resulting clip will span from the earliest ref's start to the latest \
+ref's end.
 
 Clip roles — assign one of these to each clip:
 - "teacher_demo": Speech before contains "let me show you", "listen to this", \
@@ -151,8 +161,7 @@ Respond in JSON format ONLY (no markdown fences):
             "type": "warmup",
             "clips": [
                 {
-                    "start_seconds": 8.0,
-                    "end_seconds": 82.0,
+                    "music_refs": ["MUSIC-1"],
                     "label": "3-octave A minor scale",
                     "role": "student_play"
                 }
@@ -165,30 +174,26 @@ Respond in JSON format ONLY (no markdown fences):
             "type": "focused_practice",
             "clips": [
                 {
-                    "start_seconds": 98.0,
-                    "end_seconds": 120.0,
+                    "music_refs": ["MUSIC-3"],
                     "label": "Teacher demonstrates passage",
                     "role": "teacher_demo"
                 },
                 {
-                    "start_seconds": 125.0,
-                    "end_seconds": 153.0,
+                    "music_refs": ["MUSIC-4"],
                     "label": "Attempt 1",
                     "role": "student_attempt",
                     "attempt_number": 1,
                     "context": "Focus on keeping the bow arm relaxed"
                 },
                 {
-                    "start_seconds": 165.0,
-                    "end_seconds": 193.0,
+                    "music_refs": ["MUSIC-5"],
                     "label": "Attempt 2",
                     "role": "student_attempt",
                     "attempt_number": 2,
                     "context": "Better! Now a bit faster"
                 },
                 {
-                    "start_seconds": 200.0,
-                    "end_seconds": 230.0,
+                    "music_refs": ["MUSIC-6"],
                     "label": "Attempt 3",
                     "role": "best_attempt",
                     "attempt_number": 3,
@@ -323,30 +328,53 @@ _VALID_SEGMENT_TYPES = {
 def _validate_clip(clip: dict, seg_start: float, seg_end: float) -> dict | None:
     """Validate a single clip within a lesson segment.
 
+    Accepts two formats:
+    - New format: ``music_refs`` (list of MUSIC-N strings) — no timestamps needed.
+    - Legacy format: ``start_seconds`` / ``end_seconds`` — backward compatible.
+
     Returns a cleaned clip dict or None if invalid.
     """
     if not isinstance(clip, dict):
         return None
-    try:
-        start = float(clip["start_seconds"])
-        end = float(clip["end_seconds"])
-        label = str(clip.get("label", "")).strip()
-        role = str(clip.get("role", "student_play")).strip()
-    except (KeyError, TypeError, ValueError):
-        return None
 
-    if end <= start or not label:
+    label = str(clip.get("label", "")).strip()
+    role = str(clip.get("role", "student_play")).strip()
+    if not label:
         return None
 
     if role not in _VALID_CLIP_ROLES:
         role = "student_play"
 
-    result: dict = {
-        "start_seconds": round(start, 3),
-        "end_seconds": round(end, 3),
-        "label": label,
-        "role": role,
-    }
+    # --- Determine boundary format ---
+    music_refs = clip.get("music_refs")
+    has_refs = (
+        isinstance(music_refs, list)
+        and len(music_refs) > 0
+        and all(isinstance(r, str) for r in music_refs)
+    )
+
+    if has_refs:
+        # New format: boundaries come from MUSIC-N references
+        result: dict = {
+            "music_refs": music_refs,
+            "label": label,
+            "role": role,
+        }
+    else:
+        # Legacy format: explicit timestamps
+        try:
+            start = float(clip["start_seconds"])
+            end = float(clip["end_seconds"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if end <= start:
+            return None
+        result = {
+            "start_seconds": round(start, 3),
+            "end_seconds": round(end, 3),
+            "label": label,
+            "role": role,
+        }
 
     # Optional fields
     if clip.get("attempt_number") is not None:

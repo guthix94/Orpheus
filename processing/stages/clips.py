@@ -374,14 +374,51 @@ class SubClip:
         return self.end - self.start
 
 
-def _extract_subclips(llm_segments: list[dict]) -> list[SubClip]:
+def _resolve_music_refs(
+    music_refs: list[str],
+    music_ref_map: dict[str, dict],
+) -> tuple[float, float] | None:
+    """Resolve a list of MUSIC-N references to a (start, end) time range.
+
+    Returns the min start and max end across all valid refs, or None if
+    no refs could be resolved.
+    """
+    starts: list[float] = []
+    ends: list[float] = []
+    for ref in music_refs:
+        boundaries = music_ref_map.get(ref)
+        if boundaries is not None:
+            starts.append(float(boundaries["start"]))
+            ends.append(float(boundaries["end"]))
+        else:
+            logger.warning("Clips: unknown music ref %r — skipping", ref)
+    if not starts:
+        return None
+    return min(starts), max(ends)
+
+
+def _extract_subclips(
+    llm_segments: list[dict],
+    music_ref_map: dict[str, dict] | None = None,
+) -> tuple[list[SubClip], bool]:
     """Extract individual sub-clips from hierarchical LLM segments.
 
     Each segment may contain a ``clips`` array with individual clips (attempts,
     demos, run-throughs). Falls back to one clip per segment if no nested clips
     are present.
+
+    When *music_ref_map* is provided, clips with ``music_refs`` are resolved
+    to exact VAD boundaries (no timestamp snapping needed). Clips without
+    ``music_refs`` fall back to ``start_seconds`` / ``end_seconds``.
+
+    Returns
+    -------
+    tuple[list[SubClip], bool]
+        The list of extracted sub-clips, and a boolean indicating whether
+        all clips were resolved via music_refs (True = skip snapping).
     """
     subclips: list[SubClip] = []
+    all_from_refs = True  # Track whether every clip used music_refs
 
     for seg_idx, seg in enumerate(llm_segments):
         try:
@@ -398,15 +435,36 @@ def _extract_subclips(llm_segments: list[dict]) -> list[SubClip]:
             for clip in clips_list:
                 if not isinstance(clip, dict):
                     continue
-                try:
-                    c_start = float(clip["start_seconds"])
-                    c_end = float(clip["end_seconds"])
-                    c_label = str(clip.get("label", seg_label)).strip()
-                    c_role = str(clip.get("role", "student_play")).strip()
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if c_end <= c_start:
-                    continue
+
+                c_label = str(clip.get("label", seg_label)).strip()
+                c_role = str(clip.get("role", "student_play")).strip()
+
+                # --- Try music_refs first (new format) ---
+                refs = clip.get("music_refs")
+                if (
+                    music_ref_map
+                    and isinstance(refs, list)
+                    and len(refs) > 0
+                ):
+                    resolved = _resolve_music_refs(refs, music_ref_map)
+                    if resolved is not None:
+                        c_start, c_end = resolved
+                    else:
+                        logger.warning(
+                            "Clips: all music_refs invalid for clip %r — skipping",
+                            c_label,
+                        )
+                        continue
+                else:
+                    # --- Legacy format: explicit timestamps ---
+                    all_from_refs = False
+                    try:
+                        c_start = float(clip["start_seconds"])
+                        c_end = float(clip["end_seconds"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if c_end <= c_start:
+                        continue
 
                 subclips.append(SubClip(
                     start=c_start,
@@ -421,6 +479,7 @@ def _extract_subclips(llm_segments: list[dict]) -> list[SubClip]:
                 ))
         else:
             # No nested clips — create a single clip spanning the segment
+            all_from_refs = False
             subclips.append(SubClip(
                 start=seg_start,
                 end=seg_end,
@@ -430,7 +489,7 @@ def _extract_subclips(llm_segments: list[dict]) -> list[SubClip]:
                 segment_label=seg_label,
             ))
 
-    return subclips
+    return subclips, all_from_refs
 
 
 def _snap_subclip_boundaries(
@@ -468,6 +527,7 @@ def run_clips(
     supabase_url: str,
     service_role_key: str,
     llm_segments: list[dict] | None = None,
+    music_ref_map: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Process audio into clips and upload to Supabase Storage.
 
@@ -487,6 +547,10 @@ def run_clips(
         Optional topic segments from the narrative LLM. When provided, each
         segment becomes one clip with a descriptive label instead of the
         default gap-based grouping.
+    music_ref_map:
+        Optional mapping from MUSIC-N labels to VAD start/end times.
+        When provided, clips with ``music_refs`` are resolved to exact
+        VAD boundaries — no timestamp snapping needed.
 
     Returns
     -------
@@ -509,13 +573,19 @@ def run_clips(
         clip_groups: list[ClipGroup] | None = None
 
         if llm_segments:
-            subclips = _extract_subclips(llm_segments)
+            subclips, all_from_refs = _extract_subclips(llm_segments, music_ref_map)
             if subclips:
-                subclips = _snap_subclip_boundaries(subclips, vad_segments)
-                logger.info(
-                    "Clips[%s]: using %d hierarchical sub-clips from %d LLM segments",
-                    lesson_id, len(subclips), len(llm_segments),
-                )
+                if all_from_refs:
+                    logger.info(
+                        "Clips[%s]: using %d ref-resolved sub-clips (no snapping needed)",
+                        lesson_id, len(subclips),
+                    )
+                else:
+                    subclips = _snap_subclip_boundaries(subclips, vad_segments)
+                    logger.info(
+                        "Clips[%s]: using %d hierarchical sub-clips from %d LLM segments (snapped)",
+                        lesson_id, len(subclips), len(llm_segments),
+                    )
             else:
                 # Nested clips extraction failed — fall back to segment-level
                 logger.warning("Clips[%s]: no sub-clips extracted, falling back to segment-level clips", lesson_id)
