@@ -173,11 +173,18 @@ export async function startLesson(
 
 /**
  * Stop a lesson (step 2 — sets status to "processing").
+ * Sends client-measured duration so the server doesn't have to rely solely
+ * on server-side timestamp arithmetic (which can produce 0 for short lessons).
  */
-export async function stopLesson(lessonId: string): Promise<Lesson> {
+export async function stopLesson(
+  lessonId: string,
+  durationSeconds?: number
+): Promise<Lesson> {
   return api<Lesson>(`/api/lessons/${lessonId}/stop`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({
+      duration_seconds: durationSeconds ?? null,
+    }),
   });
 }
 

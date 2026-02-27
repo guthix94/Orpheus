@@ -280,10 +280,10 @@ export default function ActiveRecordingPage() {
     }
 
     try {
-      // Stop lesson on server
+      // Stop lesson on server — send client-measured elapsed time for accurate duration
       await api(`/api/lessons/${lessonId}/stop`, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ duration_seconds: elapsed }),
       });
 
       // Upload audio
@@ -306,7 +306,7 @@ export default function ActiveRecordingPage() {
       setError((err as Error).message);
       setStopping(false);
     }
-  }, [stopping, lessonId, router, releaseWakeLock]);
+  }, [stopping, lessonId, elapsed, router, releaseWakeLock]);
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);

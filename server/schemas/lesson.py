@@ -14,6 +14,7 @@ class LessonStart(BaseModel):
 
 class LessonStop(BaseModel):
     audio_file_path: str | None = None
+    duration_seconds: int | None = None
 
 
 class LessonUpdate(BaseModel):
