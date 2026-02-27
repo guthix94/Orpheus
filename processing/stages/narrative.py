@@ -51,10 +51,17 @@ markings
 Use your musical knowledge to infer what was actually said. Generate summaries \
 using the corrected terms, not the raw transcription errors.
 
-The MUSIC-N labels, similarity scores, and audio feature data are for your \
-internal reference when creating clips. NEVER include MUSIC-N labels, \
-similarity scores, or audio feature data in the teacher_summary, \
-parent_summary, or any prose text.
+*** CRITICAL OUTPUT RULE — READ THIS FIRST ***
+The MUSIC-N labels (e.g. MUSIC-1, MUSIC-13), similarity scores (e.g. 0.98), \
+energy levels, energy profiles, and all audio feature data are INTERNAL \
+metadata for clip creation ONLY. They must NEVER appear in teacher_summary, \
+parent_summary, teacher_summary_formal, or any prose text. \
+If you find yourself writing "MUSIC-" or a similarity score in a summary, \
+STOP and rephrase using natural musical language instead \
+(e.g. "consistent repetition of the passage" not \
+"high similarity between MUSIC-13 and MUSIC-23 (0.98)"). \
+Violating this rule makes the output unusable.
+*** END CRITICAL OUTPUT RULE ***
 
 Use the timestamps to understand lesson structure and pacing — how long was \
 spent on each piece or activity. You don't need to include timestamps in the \
@@ -68,13 +75,27 @@ student — skip any references to prior lessons.
 
 TEACHER SUMMARY: Concise, specific, uses musical terminology where present in
 the transcript. Focus on what was covered, measurable progress, and areas
-needing attention. Suggest 2-3 specific practice assignments based on what the
-teacher discussed.
+needing attention.
+
+FORMATTING — this will be read on a phone screen between lessons, so it must \
+be scannable in 10 seconds:
+- Write multiple SHORT paragraphs (2-4 sentences each), separated by blank \
+lines (\\n\\n). Never write one long wall of text.
+- Use bullet points when listing technical observations or specific areas \
+worked on — but keep it natural, not every paragraph needs bullets.
+- Suggest 2-3 specific practice assignments based on what the teacher discussed.
 
 PARENT SUMMARY: Write this as the teacher speaking directly to the parent about
 their child. Use the student's name in third person ("Sofia had a great lesson
 today" NOT "Great job, Sofia!"). The tone should be warm, encouraging, and
-professional — like a teacher's note sent home. Structure:
+professional — like a teacher's note sent home.
+
+FORMATTING — parents read this on their phone, so break it into 2-3 short \
+warm paragraphs separated by blank lines (\\n\\n). You may use a short bullet \
+list for practice suggestions if it helps readability. Never write one long \
+dense paragraph.
+
+Structure:
 1. Open with something genuinely positive about today's lesson
 2. Briefly describe what was worked on (in non-technical language)
 3. Give one or two specific things the parent can encourage at home
@@ -130,9 +151,13 @@ no student playing at all. This is rare.
 mixed teaching moments with both teacher and student. This is the default.
 
 For each clip, include:
-- label: Descriptive and context-aware. Include what was practiced and how. \
-Good: "E major scale — position shift practice (4 attempts)" \
+- label: Short, descriptive, and context-aware. Include what was practiced \
+and the type of work. Do NOT include attempt counts like "(7 attempts)" or \
+"(4 attempts)" — keep labels clean. \
+Good: "E major scale — position shift practice" \
 Good: "Vivaldi mm. 1-44 — run-through" \
+Good: "String crossing passage — slow practice drill" \
+Bad: "E major scale — position shift practice (4 attempts)" \
 Bad: "Attempt 1" \
 Bad: "Scale"
 - context: One sentence summarizing the teacher's key instruction or focus \
@@ -180,7 +205,7 @@ Respond in JSON format ONLY (no markdown fences):
             "clips": [
                 {
                     "music_refs": ["MUSIC-3", "MUSIC-4", "MUSIC-5", "MUSIC-6"],
-                    "label": "String crossing passage — teacher demo + 3 student attempts",
+                    "label": "String crossing passage — bow arm relaxation drill",
                     "role": "student_play",
                     "context": "Focus on relaxing bow arm at the crossing point",
                     "shareable": true
