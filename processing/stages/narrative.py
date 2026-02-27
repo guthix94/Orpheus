@@ -51,6 +51,11 @@ markings
 Use your musical knowledge to infer what was actually said. Generate summaries \
 using the corrected terms, not the raw transcription errors.
 
+The MUSIC-N labels, similarity scores, and audio feature data are for your \
+internal reference when creating clips. NEVER include MUSIC-N labels, \
+similarity scores, or audio feature data in the teacher_summary, \
+parent_summary, or any prose text.
+
 Use the timestamps to understand lesson structure and pacing — how long was \
 spent on each piece or activity. You don't need to include timestamps in the \
 summaries.
@@ -136,9 +141,10 @@ for this clip. Keep it brief and meaningful.
 clean run-throughs, notable achievements). Be selective — only 1-3 clips \
 per lesson should be shareable.
 
-A typical 30-minute lesson covering 3 pieces should produce roughly 3-6 clips \
-total — one or two per topic. Each clip should be long enough to hear the \
-full teaching moment.
+A typical 30-minute lesson should produce 2-4 clips total. Prefer fewer, \
+longer clips. Each clip should be at least 30 seconds. Only split into \
+separate clips for clearly distinct activities. Never split a single drill \
+into multiple clips.
 
 Segments with only one music section (a full run-through, a single scale) \
 should still have a clips array with one entry referencing that single MUSIC \

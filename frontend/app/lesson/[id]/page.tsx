@@ -54,17 +54,61 @@ type SummaryTab = "teacher" | "parent";
 
 /* ── Helpers ── */
 
+/**
+ * Extract a plain-text field from a value that might be a JSON blob.
+ *
+ * Handles three cases:
+ * 1. Plain text string → return as-is
+ * 2. JSON string with the target field → extract and return the field value
+ * 3. JSON string without the target field → return null (NEVER return raw JSON)
+ */
 function extractText(raw: string | null, field: string): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
-  if (!trimmed.startsWith("{")) return raw;
+
+  // Not JSON-like — return the plain text
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("```")) return raw;
+
+  // Try to parse as JSON (possibly wrapped in markdown fences)
+  let parsed: Record<string, unknown> | null = null;
   try {
-    const parsed = JSON.parse(trimmed);
-    if (typeof parsed === "object" && parsed !== null && typeof parsed[field] === "string") {
-      return parsed[field];
+    parsed = JSON.parse(trimmed);
+  } catch {
+    // Try stripping markdown code fences
+    const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+    if (fenceMatch) {
+      try { parsed = JSON.parse(fenceMatch[1].trim()); } catch { /* still not JSON */ }
     }
-  } catch { /* not JSON */ }
+  }
+
+  if (parsed && typeof parsed === "object") {
+    // It IS valid JSON — extract the field or return null (never return raw JSON)
+    if (typeof parsed[field] === "string") return parsed[field] as string;
+    return null;
+  }
+
+  // Looks like it starts with { but is NOT valid JSON — return as-is (likely regular text)
   return raw;
+}
+
+/**
+ * Extract an array from a value that might be a JSON string or already an array.
+ * Returns an empty array if extraction fails — never returns raw data.
+ */
+function extractArray<T>(raw: T[] | string | null | undefined, field: string): T[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+      if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed[field])) {
+        return parsed[field];
+      }
+    } catch { /* not JSON */ }
+  }
+  return [];
 }
 
 function formatDuration(seconds: number): string {
@@ -375,7 +419,7 @@ export default function LessonSummaryPage() {
     setTimeout(() => setPortalCopied(false), 2000);
   };
 
-  // Derived data
+  // Derived data — use safe extraction that never leaks raw JSON
   const teacherText = lesson
     ? extractText(lesson.teacher_summary, "teacher_summary")
     : null;
@@ -383,7 +427,10 @@ export default function LessonSummaryPage() {
     ? extractText(lesson.parent_summary, "parent_summary")
     : null;
   const pieces = lesson?.pieces_detected ?? [];
-  const assignments = lesson?.suggested_assignments ?? [];
+  const assignments = extractArray<Assignment>(
+    lesson?.suggested_assignments as Assignment[] | null,
+    "suggested_assignments",
+  );
 
   const dateStr = lesson
     ? new Date(lesson.started_at).toLocaleDateString("en-US", {
