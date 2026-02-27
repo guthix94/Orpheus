@@ -266,6 +266,19 @@ export async function uploadLessonAudio(
 }
 
 /**
+ * Update a lesson's editable fields (teacher_summary, parent_summary, etc.).
+ */
+export async function updateLesson(
+  lessonId: string,
+  data: { teacher_summary?: string; parent_summary?: string }
+): Promise<Lesson> {
+  return api<Lesson>(`/api/lessons/${lessonId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+/**
  * Toggle clip sharing status with parent.
  */
 export async function toggleClipShare(

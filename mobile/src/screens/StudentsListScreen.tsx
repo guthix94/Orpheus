@@ -13,6 +13,7 @@ import {
   Platform,
   Alert,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { COLORS, FONTS, FONT_SIZES, RADII } from "../lib/theme";
@@ -21,6 +22,7 @@ import Avatar from "../components/Avatar";
 import type { StudentsStackParamList } from "../navigation/types";
 
 export default function StudentsListScreen() {
+  const insets = useSafeAreaInsets();
   const navigation =
     useNavigation<NativeStackNavigationProp<StudentsStackParamList>>();
   const [students, setStudents] = useState<Student[]>([]);
@@ -178,7 +180,7 @@ export default function StudentsListScreen() {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.title}>Students</Text>
         <TouchableOpacity
           style={styles.addButton}

@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { Feather } from "@expo/vector-icons";
 import { COLORS, FONTS, FONT_SIZES } from "../lib/theme";
 import DashboardScreen from "../screens/DashboardScreen";
 import SelectStudentScreen from "../screens/SelectStudentScreen";
@@ -27,24 +28,22 @@ const StudentsStack = createNativeStackNavigator<StudentsStackParamList>();
 const LessonsStackNav = createNativeStackNavigator<LessonsStackParamList>();
 const HomeStack = createNativeStackNavigator<HomeStackParamList>();
 
-// Simple icon component — avoids a vector icons dependency
+const TAB_ICON_MAP: Record<string, keyof typeof Feather.glyphMap> = {
+  Home: "home",
+  Students: "users",
+  Record: "mic",
+  Lessons: "book-open",
+  Settings: "settings",
+};
+
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
-  const iconMap: Record<string, string> = {
-    Home: "\u2302",
-    Students: "\u263A",
-    Record: "\u25CF",
-    Lessons: "\u2630",
-    Settings: "\u2699",
-  };
+  const iconName = TAB_ICON_MAP[name] ?? "circle";
   return (
-    <Text
-      style={{
-        fontSize: name === "Record" ? 28 : 20,
-        color: focused ? COLORS.accent : COLORS.textMuted,
-      }}
-    >
-      {iconMap[name] ?? "?"}
-    </Text>
+    <Feather
+      name={iconName}
+      size={22}
+      color={focused ? COLORS.accent : COLORS.textMuted}
+    />
   );
 }
 
@@ -281,6 +280,11 @@ export default function MainTabs() {
         component={RecordFlow}
         options={{
           tabBarLabel: "Record",
+          tabBarLabelStyle: {
+            fontFamily: FONTS.semiBold,
+            fontSize: 10,
+            marginTop: 4,
+          },
           tabBarIcon: ({ focused }) => (
             <View style={recordTabStyles.button}>
               <View
@@ -315,7 +319,8 @@ const recordTabStyles = StyleSheet.create({
     backgroundColor: COLORS.accent,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 4,
+    marginTop: -24,
+    marginBottom: 2,
     shadowColor: COLORS.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,

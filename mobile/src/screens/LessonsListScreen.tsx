@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { COLORS, FONTS, FONT_SIZES, RADII } from "../lib/theme";
@@ -44,6 +45,7 @@ function formatDuration(seconds: number | null): string {
 }
 
 export default function LessonsListScreen() {
+  const insets = useSafeAreaInsets();
   const navigation =
     useNavigation<NativeStackNavigationProp<LessonsStackParamList>>();
   const [lessons, setLessons] = useState<Lesson[]>([]);
@@ -173,7 +175,7 @@ export default function LessonsListScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.title}>Lessons</Text>
       </View>
 
