@@ -93,8 +93,8 @@ use the most specific short name possible (e.g., "Clavichord piece" not \
 "Clavichord piece (unspecified)"). Scales and exercises count as pieces. \
 Do not list the same piece twice with different descriptions.
 
-LESSON SEGMENTS WITH HIERARCHICAL CLIPS: Divide the lesson into topic segments \
-and identify individual clips within each segment.
+LESSON SEGMENTS WITH TOPIC-LEVEL CLIPS: Divide the lesson into topic segments \
+and create 1-2 clips per segment that capture the complete teaching moment.
 
 Each segment represents a natural topic section (e.g., "Scale warm-up", \
 "Vivaldi — string crossings drill", "Sight-reading new piece"). Each segment \
@@ -104,46 +104,45 @@ full lesson without gaps or overlaps. Aim for 2-8 segments.
 Segment types: "warmup", "run_through", "focused_practice", "sight_reading", \
 "technique_work", "review", "other".
 
-Within each segment, identify individual clips from the MUSIC segments. Each \
-clip corresponds to a distinct musical moment — a single attempt, a teacher \
-demo, a run-through, etc.
+Within each segment, create 1-2 clips that capture the COMPLETE teaching \
+moment — the teacher's instruction, all student attempts, corrections between \
+them, and final feedback — all in one clip. A "Vivaldi string crossings drill" \
+with a teacher demo, three student attempts, and corrections should be ONE \
+clip, not five.
 
-CRITICAL — clip boundaries: Reference the MUSIC-N segments from the timeline \
+CRITICAL — clip boundaries: Reference ALL the MUSIC-N segments for each clip \
 using "music_refs" (a list of MUSIC-N strings). Do NOT invent timestamps for \
-clips. Each clip's audio boundaries will be derived from the referenced MUSIC \
-segments' exact start/end times.
+clips. A topic-level clip should include every MUSIC-N segment from that \
+activity. For example, if a drill has MUSIC-3 through MUSIC-6:
+"music_refs": ["MUSIC-3", "MUSIC-4", "MUSIC-5", "MUSIC-6"]
+The clip audio will span from MUSIC-3's start to MUSIC-6's end, including \
+all speech between the segments.
 
-For a clip covering a single music segment: "music_refs": ["MUSIC-5"]
-For a clip spanning multiple consecutive segments (e.g., a drill with \
-speech between attempts): "music_refs": ["MUSIC-5", "MUSIC-6"]
-The resulting clip will span from the earliest ref's start to the latest \
-ref's end.
+Clip roles — assign one of these:
+- "teacher_demo": ONLY when the clip is purely a teacher demonstrating with \
+no student playing at all. This is rare.
+- "student_play": Everything else — drills, run-throughs, sight-reading, \
+mixed teaching moments with both teacher and student. This is the default.
 
-Clip roles — assign one of these to each clip:
-- "teacher_demo": Speech before contains "let me show you", "listen to this", \
-"like this", "watch" — followed by a MUSIC segment, then "OK your turn", \
-"now you try". These are typically shorter segments where the teacher plays.
-- "student_attempt": MUSIC segments with high cross-similarity to each other \
-and corrective speech between them. Part of a drill sequence.
-- "best_attempt": The attempt right before positive feedback ("great!", "much \
-better!", "that's it!", "yes!") or the final attempt before moving to a new \
-topic. Mark shareable=true on best attempts.
-- "student_play": General student playing that isn't part of a drill sequence \
-— run-throughs, sight-reading, warming up. Use this as the default when \
-the role isn't clearly one of the others.
-- "call_and_response": Short alternating teacher/student segments.
-- "joint_playing": Teacher and student playing together.
-
-For each clip, optionally include:
-- attempt_number: Sequential number for drill attempts (1, 2, 3...).
-- context: One short sentence of the teacher's key instruction or feedback \
-that preceded or followed this clip. Keep it brief and meaningful.
-- shareable: true if this clip is worth sharing with parents (best attempts, \
+For each clip, include:
+- label: Descriptive and context-aware. Include what was practiced and how. \
+Good: "E major scale — position shift practice (4 attempts)" \
+Good: "Vivaldi mm. 1-44 — run-through" \
+Bad: "Attempt 1" \
+Bad: "Scale"
+- context: One sentence summarizing the teacher's key instruction or focus \
+for this clip. Keep it brief and meaningful.
+- shareable: true if this clip is worth sharing with parents (best moments, \
 clean run-throughs, notable achievements). Be selective — only 1-3 clips \
 per lesson should be shareable.
 
+A typical 30-minute lesson covering 3 pieces should produce roughly 3-6 clips \
+total — one or two per topic. Each clip should be long enough to hear the \
+full teaching moment.
+
 Segments with only one music section (a full run-through, a single scale) \
-should still have a clips array with one entry.
+should still have a clips array with one entry referencing that single MUSIC \
+segment.
 
 Respond in JSON format ONLY (no markdown fences):
 {
@@ -174,30 +173,10 @@ Respond in JSON format ONLY (no markdown fences):
             "type": "focused_practice",
             "clips": [
                 {
-                    "music_refs": ["MUSIC-3"],
-                    "label": "Teacher demonstrates passage",
-                    "role": "teacher_demo"
-                },
-                {
-                    "music_refs": ["MUSIC-4"],
-                    "label": "Attempt 1",
-                    "role": "student_attempt",
-                    "attempt_number": 1,
-                    "context": "Focus on keeping the bow arm relaxed"
-                },
-                {
-                    "music_refs": ["MUSIC-5"],
-                    "label": "Attempt 2",
-                    "role": "student_attempt",
-                    "attempt_number": 2,
-                    "context": "Better! Now a bit faster"
-                },
-                {
-                    "music_refs": ["MUSIC-6"],
-                    "label": "Attempt 3",
-                    "role": "best_attempt",
-                    "attempt_number": 3,
-                    "context": "That's it! Hear the difference?",
+                    "music_refs": ["MUSIC-3", "MUSIC-4", "MUSIC-5", "MUSIC-6"],
+                    "label": "String crossing passage — teacher demo + 3 student attempts",
+                    "role": "student_play",
+                    "context": "Focus on relaxing bow arm at the crossing point",
                     "shareable": true
                 }
             ]
@@ -315,8 +294,7 @@ def generate_summaries(
 
 
 _VALID_CLIP_ROLES = {
-    "teacher_demo", "student_play", "student_attempt",
-    "best_attempt", "call_and_response", "joint_playing",
+    "teacher_demo", "student_play",
 }
 
 _VALID_SEGMENT_TYPES = {

@@ -45,6 +45,9 @@ _SNAP_SEARCH_WINDOW_S = 5.0
 # Minimum silence/gap duration to count as a valid snap target.
 _MIN_PAUSE_FOR_SNAP_S = 0.15
 
+# Topic-level clips shorter than this are skipped — too short to be useful.
+_MIN_TOPIC_CLIP_DURATION_S = 15.0
+
 
 @dataclass
 class ClipGroup:
@@ -374,6 +377,57 @@ class SubClip:
         return self.end - self.start
 
 
+def _expand_to_speech_context(
+    start: float,
+    end: float,
+    vad_segments: list[dict],
+    gap_threshold: float = _CLIP_GAP_THRESHOLD_S,
+) -> tuple[float, float]:
+    """Expand clip boundaries to include adjacent speech context.
+
+    When a clip is defined by music refs, the boundaries cover the playing
+    portions but may miss the teacher's instruction before the first attempt
+    and feedback after the last.  This extends boundaries to include any
+    speech VAD segment that is immediately adjacent (within *gap_threshold*
+    seconds), so the full teaching moment is audible in one clip.
+    """
+    if not vad_segments:
+        return start, end
+
+    sorted_segs = sorted(vad_segments, key=lambda s: float(s["start"]))
+
+    # Include any speech that overlaps with the current range
+    for seg in sorted_segs:
+        if seg["type"] != "speech":
+            continue
+        s, e = float(seg["start"]), float(seg["end"])
+        if s < end and e > start:  # overlaps
+            start = min(start, s)
+            end = max(end, e)
+
+    # Extend to the closest preceding speech segment if within threshold
+    for seg in reversed(sorted_segs):
+        if seg["type"] != "speech":
+            continue
+        s, e = float(seg["start"]), float(seg["end"])
+        if e <= start:
+            if start - e <= gap_threshold:
+                start = s
+            break
+
+    # Extend to the closest following speech segment if within threshold
+    for seg in sorted_segs:
+        if seg["type"] != "speech":
+            continue
+        s, e = float(seg["start"]), float(seg["end"])
+        if s >= end:
+            if s - end <= gap_threshold:
+                end = e
+            break
+
+    return start, end
+
+
 def _resolve_music_refs(
     music_refs: list[str],
     music_ref_map: dict[str, dict],
@@ -400,6 +454,7 @@ def _resolve_music_refs(
 def _extract_subclips(
     llm_segments: list[dict],
     music_ref_map: dict[str, dict] | None = None,
+    vad_segments: list[dict] | None = None,
 ) -> tuple[list[SubClip], bool]:
     """Extract individual sub-clips from hierarchical LLM segments.
 
@@ -408,7 +463,10 @@ def _extract_subclips(
     are present.
 
     When *music_ref_map* is provided, clips with ``music_refs`` are resolved
-    to exact VAD boundaries (no timestamp snapping needed). Clips without
+    to exact VAD boundaries (no timestamp snapping needed).  When
+    *vad_segments* is also provided, ref-resolved boundaries are expanded
+    to include adjacent speech context so the full teaching moment
+    (instruction, playing, feedback) is captured in one clip.  Clips without
     ``music_refs`` fall back to ``start_seconds`` / ``end_seconds``.
 
     Returns
@@ -449,6 +507,11 @@ def _extract_subclips(
                     resolved = _resolve_music_refs(refs, music_ref_map)
                     if resolved is not None:
                         c_start, c_end = resolved
+                        # Expand to include adjacent speech context
+                        if vad_segments:
+                            c_start, c_end = _expand_to_speech_context(
+                                c_start, c_end, vad_segments,
+                            )
                     else:
                         logger.warning(
                             "Clips: all music_refs invalid for clip %r — skipping",
@@ -573,8 +636,23 @@ def run_clips(
         clip_groups: list[ClipGroup] | None = None
 
         if llm_segments:
-            subclips, all_from_refs = _extract_subclips(llm_segments, music_ref_map)
+            subclips, all_from_refs = _extract_subclips(
+                llm_segments, music_ref_map, vad_segments,
+            )
             if subclips:
+                # Filter out topic-level clips that are too short to be useful
+                pre_filter = len(subclips)
+                subclips = [
+                    sc for sc in subclips
+                    if sc.duration >= _MIN_TOPIC_CLIP_DURATION_S
+                ]
+                if len(subclips) < pre_filter:
+                    logger.info(
+                        "Clips[%s]: filtered %d/%d sub-clips below %.0fs minimum duration",
+                        lesson_id, pre_filter - len(subclips), pre_filter,
+                        _MIN_TOPIC_CLIP_DURATION_S,
+                    )
+
                 if all_from_refs:
                     logger.info(
                         "Clips[%s]: using %d ref-resolved sub-clips (no snapping needed)",
