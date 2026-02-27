@@ -28,6 +28,23 @@ export interface Student {
   parent_portal_token: string | null;
 }
 
+export interface Clip {
+  index: number;
+  start: number;
+  end: number;
+  duration: number;
+  types: string[];
+  url: string;
+  label?: string;
+  shared_with_parent?: boolean;
+}
+
+export interface Assignment {
+  id?: string;
+  description: string;
+  details?: string | null;
+}
+
 export interface Lesson {
   id: string;
   student_id: string;
@@ -42,10 +59,10 @@ export interface Lesson {
   teacher_summary: string | null;
   teacher_summary_formal: string | null;
   parent_summary: string | null;
-  suggested_assignments: Record<string, unknown>[] | null;
+  suggested_assignments: Assignment[] | null;
   processing_metadata: Record<string, unknown> | null;
   timeline_json: Record<string, unknown> | null;
-  clips: Record<string, unknown>[] | null;
+  clips: Clip[] | null;
   confirmed_at: string | null;
   is_locked: boolean;
 }
@@ -111,11 +128,22 @@ async function uploadFile<T>(
   return res.json() as Promise<T>;
 }
 
-// ── Endpoints ───────────────────────────────────────────────────────────
+// ── Profile ─────────────────────────────────────────────────────────────
 
 export async function getProfile(): Promise<Profile> {
   return api<Profile>("/api/me");
 }
+
+export async function updateDisplayName(
+  displayName: string
+): Promise<Profile> {
+  return api<Profile>("/api/me/display-name", {
+    method: "PUT",
+    body: JSON.stringify({ display_name: displayName }),
+  });
+}
+
+// ── Students ────────────────────────────────────────────────────────────
 
 export async function listStudents(): Promise<Student[]> {
   return api<Student[]>("/api/students");
@@ -124,6 +152,30 @@ export async function listStudents(): Promise<Student[]> {
 export async function getStudent(studentId: string): Promise<Student> {
   return api<Student>(`/api/students/${studentId}`);
 }
+
+export async function createStudent(data: {
+  name: string;
+  instrument: string;
+  parent_email?: string | null;
+  parent_phone?: string | null;
+  notes?: string | null;
+}): Promise<Student> {
+  return api<Student>("/api/students", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function generatePortalToken(
+  studentId: string
+): Promise<{ parent_portal_token: string }> {
+  return api<{ parent_portal_token: string }>(
+    `/api/students/${studentId}/portal-token`,
+    { method: "POST" }
+  );
+}
+
+// ── Lessons ─────────────────────────────────────────────────────────────
 
 /**
  * List lessons, optionally filtered by student and/or status.
@@ -138,6 +190,13 @@ export async function listLessons(params?: {
   if (params?.status) searchParams.set("lesson_status", params.status);
   const qs = searchParams.toString();
   return api<Lesson[]>(`/api/lessons${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * Get a single lesson by ID (for polling status or viewing summary).
+ */
+export async function getLesson(lessonId: string): Promise<Lesson> {
+  return api<Lesson>(`/api/lessons/${lessonId}`);
 }
 
 /**
@@ -207,8 +266,13 @@ export async function uploadLessonAudio(
 }
 
 /**
- * Get a single lesson by ID (for polling status).
+ * Toggle clip sharing status with parent.
  */
-export async function getLesson(lessonId: string): Promise<Lesson> {
-  return api<Lesson>(`/api/lessons/${lessonId}`);
+export async function toggleClipShare(
+  lessonId: string,
+  clipIndex: number
+): Promise<Lesson> {
+  return api<Lesson>(`/api/lessons/${lessonId}/clips/${clipIndex}/share`, {
+    method: "PATCH",
+  });
 }

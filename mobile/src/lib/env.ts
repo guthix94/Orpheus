@@ -12,4 +12,6 @@ export const ENV = {
     process.env.EXPO_PUBLIC_SUPABASE_URL || "",
   SUPABASE_ANON_KEY:
     process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "",
+  WEB_APP_URL:
+    process.env.EXPO_PUBLIC_WEB_APP_URL || "https://orpheus-theta.vercel.app",
 } as const;
