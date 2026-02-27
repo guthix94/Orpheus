@@ -8,12 +8,24 @@ import SelectStudentScreen from "../screens/SelectStudentScreen";
 import ReadyToRecordScreen from "../screens/ReadyToRecordScreen";
 import RecordingActiveScreen from "../screens/RecordingActiveScreen";
 import ProcessingScreen from "../screens/ProcessingScreen";
-import PlaceholderScreen from "../screens/PlaceholderScreen";
+import StudentsListScreen from "../screens/StudentsListScreen";
+import StudentProfileScreen from "../screens/StudentProfileScreen";
+import LessonsListScreen from "../screens/LessonsListScreen";
+import LessonSummaryScreen from "../screens/LessonSummaryScreen";
 import SettingsScreen from "../screens/SettingsScreen";
-import type { MainTabParamList, RecordStackParamList } from "./types";
+import type {
+  MainTabParamList,
+  RecordStackParamList,
+  StudentsStackParamList,
+  LessonsStackParamList,
+  HomeStackParamList,
+} from "./types";
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const RecordStack = createNativeStackNavigator<RecordStackParamList>();
+const StudentsStack = createNativeStackNavigator<StudentsStackParamList>();
+const LessonsStackNav = createNativeStackNavigator<LessonsStackParamList>();
+const HomeStack = createNativeStackNavigator<HomeStackParamList>();
 
 // Simple icon component — avoids a vector icons dependency
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
@@ -36,32 +48,58 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   );
 }
 
-function HomeStack() {
-  // Dashboard can navigate into the record flow too (via "Start Lesson")
-  const Stack = createNativeStackNavigator<RecordStackParamList>();
+const stackScreenOptions = {
+  headerStyle: { backgroundColor: COLORS.bg },
+  headerTintColor: COLORS.text,
+  headerTitleStyle: { fontFamily: FONTS.semiBold, fontSize: FONT_SIZES.lg },
+  headerShadowVisible: false,
+  headerBackTitle: "",
+};
+
+// ── Home Tab Stack ────────────────────────────────────────────────
+
+function HomeLessonSummaryWrapper({
+  route,
+  navigation,
+}: {
+  route: { params: HomeStackParamList["HomeLessonSummary"] };
+  navigation: any;
+}) {
+  const { lessonId, studentName, studentIndex } = route.params;
   return (
-    <Stack.Navigator
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Stack.Screen name="SelectStudent" component={DashboardAsHome} />
-    </Stack.Navigator>
+    <LessonSummaryScreen
+      lessonId={lessonId}
+      studentName={studentName}
+      studentIndex={studentIndex}
+      onBack={() => navigation.goBack()}
+    />
   );
 }
 
-function DashboardAsHome() {
-  return <DashboardScreen />;
+function HomeTabStack() {
+  return (
+    <HomeStack.Navigator screenOptions={stackScreenOptions}>
+      <HomeStack.Screen
+        name="Dashboard"
+        component={DashboardScreen}
+        options={{ headerShown: false }}
+      />
+      <HomeStack.Screen
+        name="HomeLessonSummary"
+        component={HomeLessonSummaryWrapper as any}
+        options={{ title: "Lesson Summary" }}
+      />
+    </HomeStack.Navigator>
+  );
 }
+
+// ── Record Tab Stack ──────────────────────────────────────────────
 
 function RecordFlow() {
   return (
     <RecordStack.Navigator
       screenOptions={{
-        headerStyle: { backgroundColor: COLORS.bg },
-        headerTintColor: COLORS.text,
-        headerTitleStyle: { fontFamily: FONTS.semiBold, fontSize: FONT_SIZES.lg },
-        headerShadowVisible: false,
+        ...stackScreenOptions,
         headerBackTitle: "",
       }}
     >
@@ -97,22 +135,111 @@ function RecordFlow() {
   );
 }
 
-function StudentsPlaceholder() {
-  return <PlaceholderScreen title="Students" />;
+// ── Students Tab Stack ────────────────────────────────────────────
+
+function StudentProfileWrapper({
+  route,
+  navigation,
+}: {
+  route: { params: StudentsStackParamList["StudentProfile"] };
+  navigation: any;
+}) {
+  const { studentId, studentName, studentIndex } = route.params;
+  return (
+    <StudentProfileScreen
+      studentId={studentId}
+      studentName={studentName}
+      studentIndex={studentIndex}
+    />
+  );
 }
 
-function LessonsPlaceholder() {
-  return <PlaceholderScreen title="Lessons" />;
+function StudentsLessonSummaryWrapper({
+  route,
+  navigation,
+}: {
+  route: { params: StudentsStackParamList["LessonSummary"] };
+  navigation: any;
+}) {
+  const { lessonId, studentName, studentIndex } = route.params;
+  return (
+    <LessonSummaryScreen
+      lessonId={lessonId}
+      studentName={studentName}
+      studentIndex={studentIndex}
+      onBack={() => navigation.goBack()}
+    />
+  );
 }
+
+function StudentsTabStack() {
+  return (
+    <StudentsStack.Navigator screenOptions={stackScreenOptions}>
+      <StudentsStack.Screen
+        name="StudentsList"
+        component={StudentsListScreen}
+        options={{ headerShown: false }}
+      />
+      <StudentsStack.Screen
+        name="StudentProfile"
+        component={StudentProfileWrapper as any}
+        options={({ route }: any) => ({
+          title: route.params?.studentName ?? "Student",
+        })}
+      />
+      <StudentsStack.Screen
+        name="LessonSummary"
+        component={StudentsLessonSummaryWrapper as any}
+        options={{ title: "Lesson Summary" }}
+      />
+    </StudentsStack.Navigator>
+  );
+}
+
+// ── Lessons Tab Stack ─────────────────────────────────────────────
+
+function LessonsLessonDetailWrapper({
+  route,
+  navigation,
+}: {
+  route: { params: LessonsStackParamList["LessonDetail"] };
+  navigation: any;
+}) {
+  const { lessonId, studentName, studentIndex } = route.params;
+  return (
+    <LessonSummaryScreen
+      lessonId={lessonId}
+      studentName={studentName}
+      studentIndex={studentIndex}
+      onBack={() => navigation.goBack()}
+    />
+  );
+}
+
+function LessonsTabStack() {
+  return (
+    <LessonsStackNav.Navigator screenOptions={stackScreenOptions}>
+      <LessonsStackNav.Screen
+        name="LessonsList"
+        component={LessonsListScreen}
+        options={{ headerShown: false }}
+      />
+      <LessonsStackNav.Screen
+        name="LessonDetail"
+        component={LessonsLessonDetailWrapper as any}
+        options={{ title: "Lesson Summary" }}
+      />
+    </LessonsStackNav.Navigator>
+  );
+}
+
+// ── Main Tab Navigator ────────────────────────────────────────────
 
 export default function MainTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerShown: route.name === "HomeTab",
-        headerTitle: "",
-        headerStyle: { backgroundColor: COLORS.bg },
-        headerShadowVisible: false,
+        headerShown: false,
         tabBarStyle: {
           backgroundColor: COLORS.bgCard,
           borderTopColor: COLORS.borderLight,
@@ -141,12 +268,12 @@ export default function MainTabs() {
     >
       <Tab.Screen
         name="HomeTab"
-        component={DashboardScreen}
+        component={HomeTabStack}
         options={{ tabBarLabel: "Home" }}
       />
       <Tab.Screen
         name="StudentsTab"
-        component={StudentsPlaceholder}
+        component={StudentsTabStack}
         options={{ tabBarLabel: "Students" }}
       />
       <Tab.Screen
@@ -154,7 +281,6 @@ export default function MainTabs() {
         component={RecordFlow}
         options={{
           tabBarLabel: "Record",
-          headerShown: false,
           tabBarIcon: ({ focused }) => (
             <View style={recordTabStyles.button}>
               <View
@@ -169,13 +295,13 @@ export default function MainTabs() {
       />
       <Tab.Screen
         name="LessonsTab"
-        component={LessonsPlaceholder}
+        component={LessonsTabStack}
         options={{ tabBarLabel: "Lessons" }}
       />
       <Tab.Screen
         name="SettingsTab"
         component={SettingsScreen}
-        options={{ tabBarLabel: "Settings", headerShown: false }}
+        options={{ tabBarLabel: "Settings" }}
       />
     </Tab.Navigator>
   );

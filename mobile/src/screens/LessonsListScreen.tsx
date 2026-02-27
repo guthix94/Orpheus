@@ -11,15 +11,27 @@ import {
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { COLORS, FONTS, FONT_SIZES, RADII } from "../lib/theme";
-import { getProfile, listLessons, listStudents, Lesson, Student, Profile } from "../lib/api";
+import { listLessons, listStudents, Lesson, Student } from "../lib/api";
 import Avatar from "../components/Avatar";
-import type { HomeStackParamList } from "../navigation/types";
+import type { LessonsStackParamList } from "../navigation/types";
 
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffDays = Math.floor(
+    (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24)
+  );
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function formatDuration(seconds: number | null): string {
@@ -31,14 +43,9 @@ function formatDuration(seconds: number | null): string {
   return `${h}h ${rm}m`;
 }
 
-function formatTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-export default function DashboardScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<HomeStackParamList>>();
-  const [profile, setProfile] = useState<Profile | null>(null);
+export default function LessonsListScreen() {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<LessonsStackParamList>>();
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,16 +69,11 @@ export default function DashboardScreen() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [p, l, s] = await Promise.all([
-        getProfile(),
-        listLessons(),
-        listStudents(),
-      ]);
-      setProfile(p);
-      setLessons(l.slice(0, 10));
+      const [l, s] = await Promise.all([listLessons(), listStudents()]);
+      setLessons(l);
       setStudents(s);
     } catch (err) {
-      console.error("Dashboard fetch error:", err);
+      console.error("Lessons fetch error:", err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -90,30 +92,24 @@ export default function DashboardScreen() {
   };
 
   const handleLessonPress = (item: Lesson) => {
+    const student = studentMap[item.student_id];
+    const idx = studentIndexMap[item.student_id] ?? 0;
+
     if (item.status === "completed") {
-      const student = studentMap[item.student_id];
-      const idx = studentIndexMap[item.student_id] ?? 0;
-      navigation.navigate("HomeLessonSummary", {
+      navigation.navigate("LessonDetail", {
         lessonId: item.id,
         studentName: student?.name,
         studentIndex: idx,
       });
     }
-  };
-
-  const handleStartLesson = () => {
-    // Navigate to the Record tab's SelectStudent screen
-    const tabNav = navigation.getParent();
-    tabNav?.navigate("RecordTab");
+    // Processing lessons could navigate to processing screen,
+    // but the processing screen is in the RecordTab stack — just ignore for now
   };
 
   const renderLesson = ({ item }: { item: Lesson }) => {
     const student = studentMap[item.student_id];
     const idx = studentIndexMap[item.student_id] ?? 0;
-    const piece =
-      item.pieces_detected && item.pieces_detected.length > 0
-        ? item.pieces_detected[0]
-        : null;
+    const pieces = item.pieces_detected ?? [];
 
     return (
       <TouchableOpacity
@@ -121,22 +117,28 @@ export default function DashboardScreen() {
         onPress={() => handleLessonPress(item)}
         disabled={item.status !== "completed"}
       >
-        <Avatar name={student?.name ?? "?"} index={idx} size={40} />
+        <Avatar name={student?.name ?? "?"} index={idx} size={44} />
         <View style={styles.lessonInfo}>
           <Text style={styles.lessonStudent} numberOfLines={1}>
             {student?.name ?? "Unknown Student"}
           </Text>
-          {piece && (
-            <Text style={styles.lessonPiece} numberOfLines={1}>
-              {piece}
-            </Text>
-          )}
           <Text style={styles.lessonMeta}>
-            {formatTime(item.started_at)}
+            {formatDate(item.started_at)} · {formatTime(item.started_at)}
             {item.duration_seconds
               ? ` · ${formatDuration(item.duration_seconds)}`
               : ""}
           </Text>
+          {pieces.length > 0 && (
+            <View style={styles.chipRow}>
+              {pieces.slice(0, 3).map((p, i) => (
+                <View key={i} style={styles.chip}>
+                  <Text style={styles.chipText} numberOfLines={1}>
+                    {p}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
         <View
           style={[
@@ -169,47 +171,30 @@ export default function DashboardScreen() {
     );
   }
 
-  const displayName =
-    profile?.display_name?.split(" ")[0] ?? profile?.email ?? "";
-
   return (
-    <FlatList
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      data={lessons}
-      keyExtractor={(item) => item.id}
-      renderItem={renderLesson}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-      ListHeaderComponent={
-        <View>
-          <Text style={styles.greeting}>
-            {getGreeting()}
-            {displayName ? `, ${displayName}` : ""}
-          </Text>
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Lessons</Text>
+      </View>
 
-          <TouchableOpacity
-            style={styles.startButton}
-            onPress={handleStartLesson}
-          >
-            <Text style={styles.startButtonText}>Start Lesson</Text>
-          </TouchableOpacity>
-
-          {lessons.length > 0 && (
-            <Text style={styles.sectionTitle}>Recent Lessons</Text>
-          )}
-        </View>
-      }
-      ListEmptyComponent={
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>No lessons yet</Text>
-          <Text style={styles.emptySubtitle}>
-            Tap "Start Lesson" to record your first lesson.
-          </Text>
-        </View>
-      }
-    />
+      <FlatList
+        data={lessons}
+        keyExtractor={(item) => item.id}
+        renderItem={renderLesson}
+        contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>No lessons yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Record your first lesson to see it here.
+            </Text>
+          </View>
+        }
+      />
+    </View>
   );
 }
 
@@ -218,42 +203,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.bg,
   },
-  content: {
-    padding: 20,
-    paddingBottom: 40,
-  },
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: COLORS.bg,
   },
-  greeting: {
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  title: {
     fontFamily: FONTS.bold,
     fontSize: FONT_SIZES["2xl"],
     color: COLORS.text,
     letterSpacing: -0.5,
-    marginBottom: 20,
   },
-  startButton: {
-    backgroundColor: COLORS.accent,
-    borderRadius: RADII.medium,
-    paddingVertical: 16,
-    alignItems: "center",
-    marginBottom: 28,
-  },
-  startButtonText: {
-    fontFamily: FONTS.bold,
-    fontSize: FONT_SIZES.base,
-    color: COLORS.accentText,
-  },
-  sectionTitle: {
-    fontFamily: FONTS.semiBold,
-    fontSize: FONT_SIZES.xs,
-    color: COLORS.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 12,
+  listContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
   lessonCard: {
     flexDirection: "row",
@@ -274,23 +243,35 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.base,
     color: COLORS.text,
   },
-  lessonPiece: {
-    fontFamily: FONTS.regular,
-    fontSize: FONT_SIZES.sm,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
   lessonMeta: {
     fontFamily: FONTS.regular,
     fontSize: FONT_SIZES.xs,
     color: COLORS.textMuted,
     marginTop: 2,
   },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 6,
+  },
+  chip: {
+    backgroundColor: COLORS.accentLight,
+    borderRadius: RADII.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  chipText: {
+    fontFamily: FONTS.medium,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.accent,
+  },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: RADII.pill,
     backgroundColor: COLORS.tag,
+    marginLeft: 8,
   },
   statusCompleted: {
     backgroundColor: COLORS.successLight,
@@ -318,7 +299,7 @@ const styles = StyleSheet.create({
   },
   empty: {
     alignItems: "center",
-    paddingTop: 40,
+    paddingTop: 60,
   },
   emptyTitle: {
     fontFamily: FONTS.semiBold,

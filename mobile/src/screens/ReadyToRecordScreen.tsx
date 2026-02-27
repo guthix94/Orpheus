@@ -59,7 +59,7 @@ export default function ReadyToRecordScreen({ route, navigation }: Props) {
                 <Text style={styles.assignmentsLabel}>Assignments</Text>
                 {prevLesson.suggested_assignments.map((a, i) => (
                   <Text key={i} style={styles.assignmentItem}>
-                    {"\u2022"} {(a as Record<string, string>).description}
+                    {"\u2022"} {(a as unknown as Record<string, string>).description}
                   </Text>
                 ))}
               </View>

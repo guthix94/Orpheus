@@ -32,3 +32,35 @@ export type MainTabParamList = {
   LessonsTab: undefined;
   SettingsTab: undefined;
 };
+
+export type StudentsStackParamList = {
+  StudentsList: undefined;
+  StudentProfile: {
+    studentId: string;
+    studentName: string;
+    studentIndex: number;
+  };
+  LessonSummary: {
+    lessonId: string;
+    studentName?: string;
+    studentIndex?: number;
+  };
+};
+
+export type LessonsStackParamList = {
+  LessonsList: undefined;
+  LessonDetail: {
+    lessonId: string;
+    studentName?: string;
+    studentIndex?: number;
+  };
+};
+
+export type HomeStackParamList = {
+  Dashboard: undefined;
+  HomeLessonSummary: {
+    lessonId: string;
+    studentName?: string;
+    studentIndex?: number;
+  };
+};
