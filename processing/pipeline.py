@@ -56,6 +56,95 @@ def _format_timestamped_transcript(segments) -> str:
     return "\n".join(lines)
 
 
+def _fmt_duration(seconds: float) -> str:
+    """Format a duration as a human-readable string (e.g. '1m 22s', '6s')."""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    m = int(seconds) // 60
+    s = int(seconds) % 60
+    return f"{m}m {s:02d}s" if s else f"{m}m"
+
+
+def _build_unified_timeline(
+    vad_segments: list[dict],
+    transcript_segments: list[dict],
+    music_similarities: list[dict],
+) -> str:
+    """Build a unified timeline interleaving VAD segments with transcript text.
+
+    Creates a chronological view so Claude sees the full lesson flow:
+    speech (with transcript text), music (with audio features and
+    cross-similarity), and silence.  This replaces the speech-only
+    ``[M:SS] text`` format.
+    """
+    # Number music segments for reference labels (MUSIC-1, MUSIC-2, ...)
+    music_counter = 0
+    music_seg_map: dict[int, int] = {}  # vad segment index -> music number
+    for i, seg in enumerate(vad_segments):
+        if seg["type"] == "music":
+            music_counter += 1
+            music_seg_map[i] = music_counter
+
+    # Build similarity lookup: vad index -> [(other_music_number, score)]
+    sim_by_idx: dict[int, list[tuple[int, float]]] = {}
+    for sim in music_similarities:
+        a_idx = sim["segment_a_index"]
+        b_idx = sim["segment_b_index"]
+        score = sim["similarity"]
+        a_num = music_seg_map.get(a_idx)
+        b_num = music_seg_map.get(b_idx)
+        if a_num is not None and b_num is not None:
+            sim_by_idx.setdefault(a_idx, []).append((b_num, score))
+            sim_by_idx.setdefault(b_idx, []).append((a_num, score))
+
+    # Build entries: (start_time, formatted_line)
+    entries: list[tuple[float, str]] = []
+
+    # Transcript speech entries
+    for seg in transcript_segments:
+        start = seg["start"]
+        text = seg.get("text", "").strip()
+        if text:
+            entries.append((start, f'SPEECH: "{text}"'))
+
+    # Music and silence VAD entries
+    for i, seg in enumerate(vad_segments):
+        start = float(seg["start"])
+        end = float(seg["end"])
+        duration = end - start
+
+        if seg["type"] == "music":
+            num = music_seg_map[i]
+            parts = [f"MUSIC-{num} ({_fmt_duration(duration)})"]
+
+            features = seg.get("features", {})
+            if features:
+                level = features.get("energy_level", "")
+                profile = features.get("energy_profile", "")
+                if level and profile:
+                    parts.append(f"energy: {level}, {profile}")
+
+            for other_num, score in sim_by_idx.get(i, []):
+                parts.append(f"sim to MUSIC-{other_num}: {score}")
+
+            entries.append((start, " | ".join(parts)))
+
+        elif seg["type"] == "silence" and duration >= 3.0:
+            entries.append((start, f"SILENCE ({_fmt_duration(duration)})"))
+
+    # Sort chronologically
+    entries.sort(key=lambda e: e[0])
+
+    # Format with timestamps
+    lines: list[str] = []
+    for start, text in entries:
+        minutes = int(start) // 60
+        seconds = int(start) % 60
+        lines.append(f"[{minutes}:{seconds:02d}] {text}")
+
+    return "\n".join(lines)
+
+
 def _build_whisper_prompt(student) -> str:
     """Build a Whisper prompt with domain vocabulary and student context."""
     parts = [_WHISPER_PROMPT_BASE]
@@ -259,8 +348,28 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
         except Exception:
             logger.exception("Pipeline[%s]: failed to query previous lesson", lesson_id)
 
-        # ---- Format timestamped transcript for narrative ----
-        if transcript_segments:
+        # ---- Format transcript for narrative ----
+        # When VAD data is available, build a unified timeline that
+        # interleaves speech (with text), music (with audio features),
+        # and silence segments — giving Claude full lesson context.
+        music_similarities: list[dict] = []
+        if vad_result is not None:
+            music_similarities = vad_result.music_similarities
+
+        if transcript_segments and lesson.vad_segments and music_similarities is not None:
+            timestamped_transcript = _build_unified_timeline(
+                vad_segments=lesson.vad_segments,
+                transcript_segments=transcript_segments,
+                music_similarities=music_similarities,
+            )
+            logger.info(
+                "Pipeline[%s]: built unified timeline (%d chars) from %d VAD + %d transcript segments",
+                lesson_id,
+                len(timestamped_transcript),
+                len(lesson.vad_segments),
+                len(transcript_segments),
+            )
+        elif transcript_segments:
             timestamped_transcript = _format_timestamped_transcript(transcript_segments)
         else:
             timestamped_transcript = transcript_text

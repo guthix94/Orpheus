@@ -52,9 +52,13 @@ class VADSegment:
     start: float  # seconds in real lesson time
     end: float  # seconds in real lesson time
     type: str  # "speech", "music", or "silence"
+    features: dict | None = None  # audio features for music segments
 
     def to_dict(self) -> dict:
-        return {"start": round(self.start, 3), "end": round(self.end, 3), "type": self.type}
+        d = {"start": round(self.start, 3), "end": round(self.end, 3), "type": self.type}
+        if self.features:
+            d["features"] = self.features
+        return d
 
 
 @dataclass
@@ -76,6 +80,7 @@ class VADResult:
     timestamp_mappings: list[TimestampMapping] = field(default_factory=list)
     original_duration_s: float = 0.0
     speech_duration_s: float = 0.0
+    music_similarities: list[dict] = field(default_factory=list)
 
 
 def _load_vad_model():
@@ -448,6 +453,122 @@ def remap_transcript_segments(
     return segments
 
 
+def _compute_music_features(
+    segments: list[VADSegment],
+    waveform,
+    sample_rate: int,
+) -> list[dict]:
+    """Compute audio features for each music segment and cross-segment similarity.
+
+    For each segment classified as "music", computes:
+    - RMS energy (overall loudness)
+    - Energy variance (steady vs dynamic playing)
+    - Zero-crossing rate (rough proxy for pitch register)
+    - Mel-frequency fingerprint for cross-segment spectral similarity
+
+    Features are stored on each segment's ``features`` dict. Returns a list of
+    similarity entries for music segment pairs with cosine similarity > 0.7.
+    """
+    import torch
+    import torchaudio
+
+    music_indices: list[int] = []
+    fingerprints: list = []
+
+    mel_transform = torchaudio.transforms.MelSpectrogram(
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=512,
+        n_mels=40,
+    )
+
+    for i, seg in enumerate(segments):
+        if seg.type != "music":
+            continue
+
+        start_sample = int(seg.start * sample_rate)
+        end_sample = min(int(seg.end * sample_rate), waveform.shape[0])
+
+        if end_sample - start_sample < 1024:
+            continue
+
+        audio = waveform[start_sample:end_sample].float()
+
+        # RMS energy
+        rms = (audio ** 2).mean().sqrt().item()
+
+        # Energy variance — RMS in 100ms windows
+        window_samples = int(0.1 * sample_rate)
+        if len(audio) >= window_samples * 2:
+            n_windows = len(audio) // window_samples
+            windowed = audio[: n_windows * window_samples].reshape(n_windows, window_samples)
+            window_rms = (windowed ** 2).mean(dim=1).sqrt()
+            energy_var = window_rms.var().item()
+        else:
+            energy_var = 0.0
+
+        # Zero-crossing rate
+        signs = torch.sign(audio)
+        zcr = (signs[1:] != signs[:-1]).float().mean().item()
+
+        # Mel-frequency fingerprint: mean mel-band energies
+        mel_spec = mel_transform(audio.unsqueeze(0))  # (1, n_mels, time)
+        fingerprint = mel_spec.squeeze(0).mean(dim=1)  # (n_mels,)
+        norm = fingerprint.norm()
+        if norm > 0:
+            fingerprint = fingerprint / norm
+
+        # Classify energy profile (for human-readable timeline)
+        if energy_var < 0.0001:
+            energy_profile = "steady"
+        elif energy_var < 0.001:
+            energy_profile = "moderate"
+        else:
+            energy_profile = "varied"
+
+        if rms < 0.01:
+            energy_level = "quiet"
+        elif rms < 0.05:
+            energy_level = "moderate"
+        else:
+            energy_level = "loud"
+
+        seg.features = {
+            "rms_energy": round(rms, 4),
+            "energy_variance": round(energy_var, 6),
+            "energy_level": energy_level,
+            "energy_profile": energy_profile,
+            "zero_crossing_rate": round(zcr, 4),
+        }
+
+        music_indices.append(i)
+        fingerprints.append(fingerprint)
+
+    # Cross-segment cosine similarity
+    similarities: list[dict] = []
+    if len(fingerprints) >= 2:
+        fp_matrix = torch.stack(fingerprints)  # (N, n_mels)
+        sim_matrix = torch.nn.functional.cosine_similarity(
+            fp_matrix.unsqueeze(1), fp_matrix.unsqueeze(0), dim=2,
+        )
+        for a in range(len(music_indices)):
+            for b in range(a + 1, len(music_indices)):
+                score = sim_matrix[a, b].item()
+                if score > 0.7:
+                    similarities.append({
+                        "segment_a_index": music_indices[a],
+                        "segment_b_index": music_indices[b],
+                        "similarity": round(score, 2),
+                    })
+
+    logger.info(
+        "VAD: computed audio features for %d music segments, %d similarity pairs",
+        len(music_indices),
+        len(similarities),
+    )
+    return similarities
+
+
 def run_vad(audio_path: str | Path) -> VADResult | None:
     """Run Silero VAD on a lesson audio file.
 
@@ -546,6 +667,14 @@ def run_vad(audio_path: str | Path) -> VADResult | None:
         # Classify gaps between speech segments as music or silence
         all_segments = _classify_gaps(speech_segments, waveform, sample_rate, total_duration)
 
+        # Compute audio features for music segments (RMS, energy variance,
+        # ZCR, mel fingerprint) and cross-segment spectral similarity.
+        music_similarities: list[dict] = []
+        try:
+            music_similarities = _compute_music_features(all_segments, waveform, sample_rate)
+        except Exception:
+            logger.exception("VAD: music feature computation failed — continuing without features")
+
         # Extract speech-only audio and build timestamp mapping
         speech_audio_path, mappings, speech_duration = _extract_speech_audio(
             waveform, sample_rate, speech_segments
@@ -573,6 +702,7 @@ def run_vad(audio_path: str | Path) -> VADResult | None:
             timestamp_mappings=mappings,
             original_duration_s=total_duration,
             speech_duration_s=speech_duration,
+            music_similarities=music_similarities,
         )
 
     except Exception:
