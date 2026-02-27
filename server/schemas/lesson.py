@@ -49,10 +49,13 @@ class LessonResponse(BaseModel):
     teacher_summary_formal: str | None = None
     parent_summary: str | None = None
     suggested_assignments: list[dict[str, Any]] | None = None
-    processing_metadata: dict[str, Any] | None = None
-    timeline_json: dict[str, Any] | None = None
     clips: list[dict[str, Any]] | None = None
     confirmed_at: datetime | None = None
     is_locked: bool = False
+
+    # Internal pipeline data excluded from API response:
+    # - processing_metadata (contains lesson_segments, music_refs, timing data)
+    # - timeline_json (contains raw transcript segments)
+    # These are stored on the Lesson model but never sent to the frontend.
 
     model_config = {"from_attributes": True}
