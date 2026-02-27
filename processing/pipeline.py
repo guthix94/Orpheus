@@ -69,21 +69,33 @@ def _build_unified_timeline(
     vad_segments: list[dict],
     transcript_segments: list[dict],
     music_similarities: list[dict],
-) -> str:
+) -> tuple[str, dict[str, dict]]:
     """Build a unified timeline interleaving VAD segments with transcript text.
 
     Creates a chronological view so Claude sees the full lesson flow:
     speech (with transcript text), music (with audio features and
     cross-similarity), and silence.  This replaces the speech-only
     ``[M:SS] text`` format.
+
+    Returns
+    -------
+    tuple[str, dict[str, dict]]
+        The timeline string and a mapping from MUSIC-N labels to their
+        exact VAD start/end times, e.g.
+        ``{"MUSIC-1": {"start": 0.449, "end": 12.0}, ...}``.
     """
     # Number music segments for reference labels (MUSIC-1, MUSIC-2, ...)
     music_counter = 0
     music_seg_map: dict[int, int] = {}  # vad segment index -> music number
+    music_ref_map: dict[str, dict] = {}  # "MUSIC-N" -> {"start": ..., "end": ...}
     for i, seg in enumerate(vad_segments):
         if seg["type"] == "music":
             music_counter += 1
             music_seg_map[i] = music_counter
+            music_ref_map[f"MUSIC-{music_counter}"] = {
+                "start": round(float(seg["start"]), 3),
+                "end": round(float(seg["end"]), 3),
+            }
 
     # Build similarity lookup: vad index -> [(other_music_number, score)]
     sim_by_idx: dict[int, list[tuple[int, float]]] = {}
@@ -142,7 +154,7 @@ def _build_unified_timeline(
         seconds = int(start) % 60
         lines.append(f"[{minutes}:{seconds:02d}] {text}")
 
-    return "\n".join(lines)
+    return "\n".join(lines), music_ref_map
 
 
 def _build_whisper_prompt(student) -> str:
@@ -356,16 +368,18 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
         if vad_result is not None:
             music_similarities = vad_result.music_similarities
 
+        music_ref_map: dict[str, dict] = {}
         if transcript_segments and lesson.vad_segments and music_similarities is not None:
-            timestamped_transcript = _build_unified_timeline(
+            timestamped_transcript, music_ref_map = _build_unified_timeline(
                 vad_segments=lesson.vad_segments,
                 transcript_segments=transcript_segments,
                 music_similarities=music_similarities,
             )
             logger.info(
-                "Pipeline[%s]: built unified timeline (%d chars) from %d VAD + %d transcript segments",
+                "Pipeline[%s]: built unified timeline (%d chars, %d music refs) from %d VAD + %d transcript segments",
                 lesson_id,
                 len(timestamped_transcript),
+                len(music_ref_map),
                 len(lesson.vad_segments),
                 len(transcript_segments),
             )
@@ -422,6 +436,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                         supabase_url=settings.supabase_url,
                         service_role_key=settings.supabase_service_role_key,
                         llm_segments=narrative.lesson_segments,
+                        music_ref_map=music_ref_map or None,
                     )
                     clips_duration = time.time() - t0
                     logger.info(
