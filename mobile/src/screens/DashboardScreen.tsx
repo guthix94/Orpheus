@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { COLORS, FONTS, FONT_SIZES, RADII } from "../lib/theme";
@@ -37,6 +38,7 @@ function formatTime(dateStr: string): string {
 }
 
 export default function DashboardScreen() {
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<HomeStackParamList>>();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
@@ -68,7 +70,9 @@ export default function DashboardScreen() {
         listStudents(),
       ]);
       setProfile(p);
-      setLessons(l.slice(0, 10));
+      // Filter out orphaned "recording" lessons — they clutter the dashboard
+      const displayable = l.filter((lesson: Lesson) => lesson.status !== "recording");
+      setLessons(displayable.slice(0, 10));
       setStudents(s);
     } catch (err) {
       console.error("Dashboard fetch error:", err);
@@ -169,13 +173,12 @@ export default function DashboardScreen() {
     );
   }
 
-  const displayName =
-    profile?.display_name?.split(" ")[0] ?? profile?.email ?? "";
+  const displayName = profile?.display_name ?? profile?.email ?? "";
 
   return (
     <FlatList
       style={styles.container}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 16 }]}
       data={lessons}
       keyExtractor={(item) => item.id}
       renderItem={renderLesson}
@@ -219,7 +222,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   content: {
-    padding: 20,
+    paddingHorizontal: 20,
     paddingBottom: 40,
   },
   centered: {

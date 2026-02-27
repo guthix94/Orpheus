@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
@@ -11,7 +12,8 @@ import {
 import { Audio } from "expo-av";
 import * as Clipboard from "expo-clipboard";
 import { COLORS, FONTS, FONT_SIZES, RADII } from "../lib/theme";
-import { getLesson, getStudent, toggleClipShare, Lesson, Student, Clip } from "../lib/api";
+import { getLesson, getStudent, toggleClipShare, updateLesson, generatePortalToken, Lesson, Student, Clip } from "../lib/api";
+import { ENV } from "../lib/env";
 import Avatar from "../components/Avatar";
 
 interface Props {
@@ -194,6 +196,11 @@ export default function LessonSummaryScreen({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [portalCopied, setPortalCopied] = useState(false);
+  const [generatingToken, setGeneratingToken] = useState(false);
 
   const studentName = student?.name ?? initialStudentName ?? "Student";
   const studentIdx = initialStudentIndex ?? 0;
@@ -219,6 +226,57 @@ export default function LessonSummaryScreen({
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const handleEditStart = () => {
+    setEditText(extractText(lesson?.teacher_summary ?? null));
+    setEditing(true);
+  };
+
+  const handleEditCancel = () => {
+    setEditing(false);
+    setEditText("");
+  };
+
+  const handleEditSave = async () => {
+    if (!lesson) return;
+    setSaving(true);
+    try {
+      const updated = await updateLesson(lesson.id, { teacher_summary: editText });
+      setLesson(updated);
+      setEditing(false);
+    } catch (err) {
+      Alert.alert("Error", "Could not save summary. Please try again.");
+      console.error("Update lesson error:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSharePortal = async () => {
+    if (!student) return;
+    let token = student.parent_portal_token;
+
+    if (!token) {
+      setGeneratingToken(true);
+      try {
+        const result = await generatePortalToken(student.id);
+        token = result.parent_portal_token;
+        setStudent({ ...student, parent_portal_token: token });
+      } catch (err) {
+        Alert.alert("Error", "Could not generate portal link.");
+        console.error("Portal token error:", err);
+        setGeneratingToken(false);
+        return;
+      } finally {
+        setGeneratingToken(false);
+      }
+    }
+
+    const portalUrl = `${ENV.WEB_APP_URL}/parent/${token}`;
+    await Clipboard.setStringAsync(portalUrl);
+    setPortalCopied(true);
+    setTimeout(() => setPortalCopied(false), 2000);
+  };
 
   const handleCopyParentMessage = async () => {
     const text = extractText(lesson?.parent_summary ?? null);
@@ -323,10 +381,59 @@ export default function LessonSummaryScreen({
       {/* Teacher Summary */}
       {teacherSummary ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Summary</Text>
-          <View style={styles.card}>
-            <Text style={styles.summaryText}>{teacherSummary}</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Summary</Text>
+            {!editing && !lesson?.is_locked && (
+              <TouchableOpacity onPress={handleEditStart}>
+                <Text style={styles.editLink}>Edit</Text>
+              </TouchableOpacity>
+            )}
           </View>
+          {editing ? (
+            <View>
+              <TextInput
+                style={styles.editInput}
+                multiline
+                value={editText}
+                onChangeText={setEditText}
+                autoFocus
+              />
+              <View style={styles.editActions}>
+                <TouchableOpacity
+                  style={styles.editCancelButton}
+                  onPress={handleEditCancel}
+                  disabled={saving}
+                >
+                  <Text style={styles.editCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.editSaveButton, saving && { opacity: 0.7 }]}
+                  onPress={handleEditSave}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color={COLORS.accentText} />
+                  ) : (
+                    <Text style={styles.editSaveText}>Save</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.card}>
+              {teacherSummary.split("\n").filter(Boolean).map((paragraph, i, arr) => (
+                <Text
+                  key={i}
+                  style={[
+                    styles.summaryText,
+                    i < arr.length - 1 && { marginBottom: 12 },
+                  ]}
+                >
+                  {paragraph}
+                </Text>
+              ))}
+            </View>
+          )}
         </View>
       ) : null}
 
@@ -376,17 +483,26 @@ export default function LessonSummaryScreen({
         </View>
       ) : null}
 
-      {/* Send to Parent */}
-      {parentSummary ? (
+      {/* Parent Portal */}
+      {student && (
         <TouchableOpacity
           style={styles.sendButton}
-          onPress={handleCopyParentMessage}
+          onPress={handleSharePortal}
+          disabled={generatingToken}
         >
-          <Text style={styles.sendButtonText}>
-            {copied ? "Copied to Clipboard!" : "Send to Parent"}
-          </Text>
+          {generatingToken ? (
+            <ActivityIndicator size="small" color={COLORS.accentText} />
+          ) : (
+            <Text style={styles.sendButtonText}>
+              {portalCopied
+                ? "Portal Link Copied!"
+                : student.parent_portal_token
+                  ? "Share Parent Portal"
+                  : "Set Up Parent Portal"}
+            </Text>
+          )}
         </TouchableOpacity>
-      ) : null}
+      )}
 
       <View style={{ height: 40 }} />
     </ScrollView>
@@ -616,7 +732,61 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.regular,
     fontSize: FONT_SIZES.base,
     color: COLORS.text,
-    lineHeight: 22,
+    lineHeight: 24,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  editLink: {
+    fontFamily: FONTS.semiBold,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.accent,
+  },
+  editInput: {
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADII.medium,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    fontFamily: FONTS.regular,
+    fontSize: FONT_SIZES.base,
+    color: COLORS.text,
+    lineHeight: 24,
+    minHeight: 120,
+    textAlignVertical: "top",
+  },
+  editActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 10,
+    gap: 10,
+  },
+  editCancelButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: RADII.small,
+    backgroundColor: COLORS.bgSurface,
+  },
+  editCancelText: {
+    fontFamily: FONTS.semiBold,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
+  },
+  editSaveButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: RADII.small,
+    backgroundColor: COLORS.accent,
+    minWidth: 70,
+    alignItems: "center",
+  },
+  editSaveText: {
+    fontFamily: FONTS.bold,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.accentText,
   },
   assignmentItem: {
     flexDirection: "row",
