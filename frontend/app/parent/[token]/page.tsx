@@ -705,7 +705,7 @@ export default function ParentPortalPage() {
   return (
     <div className="min-h-screen bg-cream">
       {/* Header — sticky */}
-      <header className="sticky top-0 z-30 border-b border-sand bg-cream/90 backdrop-blur-sm">
+      <header className="sticky top-0 z-30 border-b border-sand bg-cream/90 backdrop-blur-sm pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-[600px] px-5 py-4">
           <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-stone">
             ORPHEUS
@@ -723,7 +723,7 @@ export default function ParentPortalPage() {
       </header>
 
       {/* Tabs */}
-      <div className="sticky top-[89px] z-20 border-b border-sand bg-cream/90 backdrop-blur-sm">
+      <div className="sticky z-20 border-b border-sand bg-cream/90 backdrop-blur-sm [top:calc(89px_+_env(safe-area-inset-top))]">
         <div className="mx-auto flex max-w-[600px] px-5">
           <button
             onClick={() => setActiveTab("latest")}
