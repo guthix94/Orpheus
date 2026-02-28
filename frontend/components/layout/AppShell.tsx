@@ -18,10 +18,10 @@ export default function AppShell({ children }: AppShellProps) {
         className={`
           min-h-screen
           md:ml-[var(--spacing-sidebar)]
-          px-5 pb-24
-          [padding-top:calc(env(safe-area-inset-top)_+_1.5rem)]
-          md:[padding-top:2rem] md:px-8 md:pb-8
-          [padding-bottom:calc(6rem+env(safe-area-inset-bottom))]
+          px-5
+          [padding-top:calc(var(--safe-area-top)_+_1.5rem)]
+          [padding-bottom:calc(5rem_+_var(--safe-area-bottom))]
+          md:[padding-top:2rem] md:px-8
           md:[padding-bottom:2rem]
         `}
       >

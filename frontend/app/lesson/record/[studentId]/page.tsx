@@ -343,7 +343,7 @@ export default function ActiveRecordingPage() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-cream">
+    <div className="fixed inset-0 z-50 flex flex-col bg-cream pt-[var(--safe-area-top)] pb-[var(--safe-area-bottom)]">
       {/* Pulsing red bar at top */}
       <div className="h-[3px] w-full bg-record-red animate-[pulse-bar_2s_ease-in-out_infinite]" />
 
