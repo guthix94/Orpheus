@@ -109,6 +109,15 @@
   50% { transform: scale(1.3); opacity: 0.5; }
 }
 
+/* ─── Safe-area insets as CSS custom properties ─── */
+/* Defining these once on :root avoids issues with env() inside Tailwind
+   arbitrary values and ensures they resolve consistently on first load
+   AND after client-side navigation on Android.                          */
+:root {
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* ─── Base Styles ─── */
 html {
   -webkit-font-smoothing: antialiased;
