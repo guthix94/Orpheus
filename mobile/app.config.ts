@@ -32,6 +32,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "RECORD_AUDIO",
       "FOREGROUND_SERVICE",
       "FOREGROUND_SERVICE_MICROPHONE",
+      "POST_NOTIFICATIONS",
     ],
   },
   web: {
@@ -45,5 +46,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           "Orpheus needs microphone access to record music lessons.",
       },
     ],
+    "./plugins/withNotifeeService",
   ],
 });

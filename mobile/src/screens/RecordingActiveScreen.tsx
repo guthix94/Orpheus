@@ -73,8 +73,8 @@ export default function RecordingActiveScreen({ route, navigation }: Props) {
         if (cancelled) return;
         setLessonId(lesson.id);
 
-        // Step 2: Start recording
-        await startRecording();
+        // Step 2: Start recording (pass student name for Android notification)
+        await startRecording(studentName);
       } catch (err) {
         if (!cancelled) {
           const msg =
