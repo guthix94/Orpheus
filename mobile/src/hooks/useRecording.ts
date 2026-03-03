@@ -2,8 +2,10 @@
  * Audio recording hook using expo-audio.
  *
  * Requirements met:
- * 1. Background recording (survives screen lock & app switch) via expo-audio config plugin
- *    + AudioMode.allowsBackgroundRecording
+ * 1. Background recording (survives screen lock & app switch):
+ *    - expo-audio AudioMode.allowsBackgroundRecording for native recording continuity
+ *    - Android foreground service via @notifee/react-native keeps process alive
+ *    - iOS UIBackgroundModes: ['audio'] in Info.plist
  * 2. Long sessions (30-60 min) — native recording, no JS chunking
  * 3. No audio processing — android uses "unprocessed" audioSource;
  *    iOS does not apply VoIP processing to standard recording sessions
@@ -20,6 +22,7 @@
  */
 
 import { useRef, useState, useCallback, useEffect } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import {
   useAudioRecorder,
   RecordingPresets,
@@ -27,6 +30,11 @@ import {
   setAudioModeAsync,
   type RecordingOptions,
 } from "expo-audio";
+import {
+  startRecordingNotification,
+  updateRecordingNotification,
+  stopRecordingNotification,
+} from "../services/recordingNotification";
 
 const TAG = "[useRecording]";
 
@@ -38,7 +46,7 @@ interface RecordingState {
 }
 
 interface RecordingActions {
-  startRecording: () => Promise<void>;
+  startRecording: (studentName?: string) => Promise<void>;
   stopRecording: () => Promise<string | null>;
 }
 
@@ -73,13 +81,22 @@ export function useRecording(): RecordingState & RecordingActions {
   const [audioUri, setAudioUri] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
+  const studentNameRef = useRef<string | null>(null);
+  const isRecordingRef = useRef(false);
 
   // Update elapsed time using wall-clock difference for accuracy
-  const startTimer = useCallback(() => {
+  const startTimer = useCallback((studentName?: string) => {
     startTimeRef.current = Date.now();
     setElapsed(0);
     timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      const secs = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      setElapsed(secs);
+      // Update notification every 30 seconds (the notification's own
+      // chronometer handles real-time display, so we only need periodic
+      // body text syncs)
+      if (studentNameRef.current && secs > 0 && secs % 30 === 0) {
+        updateRecordingNotification(studentNameRef.current, secs);
+      }
     }, 1000);
   }, []);
 
@@ -94,10 +111,27 @@ export function useRecording(): RecordingState & RecordingActions {
     return () => stopTimer();
   }, [stopTimer]);
 
-  const startRecording = useCallback(async () => {
+  // When the app returns to foreground, immediately recalculate elapsed
+  // time from the wall clock. setInterval callbacks may not fire while
+  // the JS thread is suspended in the background.
+  useEffect(() => {
+    const handleAppState = (nextState: AppStateStatus) => {
+      if (nextState === "active" && isRecordingRef.current && startTimeRef.current > 0) {
+        const secs = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        setElapsed(secs);
+        console.log(TAG, "App resumed, elapsed:", secs, "seconds");
+      }
+    };
+
+    const sub = AppState.addEventListener("change", handleAppState);
+    return () => sub.remove();
+  }, []);
+
+  const startRecording = useCallback(async (studentName?: string) => {
     try {
       setError(null);
       setAudioUri(null);
+      studentNameRef.current = studentName ?? null;
 
       console.log(TAG, "Requesting microphone permission...");
       const permStatus = await requestRecordingPermissionsAsync();
@@ -105,6 +139,13 @@ export function useRecording(): RecordingState & RecordingActions {
       if (!permStatus.granted) {
         setError("Microphone permission is required to record lessons.");
         return;
+      }
+
+      // Start Android foreground service BEFORE recording begins.
+      // This ensures the process stays alive even if the user immediately
+      // switches away from the app.
+      if (studentName) {
+        await startRecordingNotification(studentName);
       }
 
       // Configure audio mode for background recording
@@ -128,13 +169,16 @@ export function useRecording(): RecordingState & RecordingActions {
       console.log(TAG, "Calling recorder.record()...");
       recorder.record();
       setIsRecording(true);
-      startTimer();
+      isRecordingRef.current = true;
+      startTimer(studentName);
       console.log(TAG, "Recording started successfully");
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Failed to start recording";
       setError(msg);
       console.error(TAG, "Recording start error:", err);
+      // Clean up foreground service if recording failed to start
+      await stopRecordingNotification();
     }
   }, [recorder, startTimer]);
 
@@ -143,9 +187,14 @@ export function useRecording(): RecordingState & RecordingActions {
     try {
       stopTimer();
       setIsRecording(false);
+      isRecordingRef.current = false;
+      studentNameRef.current = null;
 
       console.log(TAG, "Calling recorder.stop()...");
       await recorder.stop();
+
+      // Stop the Android foreground service
+      await stopRecordingNotification();
 
       const uri = recorder.uri;
       console.log(TAG, "Recording stopped, uri:", uri);
@@ -161,6 +210,8 @@ export function useRecording(): RecordingState & RecordingActions {
         err instanceof Error ? err.message : "Failed to stop recording";
       setError(msg);
       console.error(TAG, "Recording stop error:", err);
+      // Ensure foreground service is stopped even on error
+      await stopRecordingNotification();
       return null;
     }
   }, [recorder, stopTimer, isRecording]);
