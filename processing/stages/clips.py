@@ -1,8 +1,11 @@
-"""Audio clips processing — segment lesson audio, upload clips to Supabase Storage.
+"""Audio clips processing — slice full lesson audio by topic, upload to Supabase Storage.
 
-Takes VAD segments and groups consecutive segments into clips. Adjacent segments
-with a gap < 4 seconds belong to the same clip; gaps >= 4 seconds start a new
-clip.  Clips that contain only silence are skipped.
+The LLM identifies topic boundaries (lesson_segments). The full audio is sliced
+at those boundaries so every second of the lesson is preserved and accessible.
+Each segment becomes one clip with a topic label.
+
+Fallback: if the LLM returns no segments, the full audio is uploaded as a
+single clip.
 
 Each clip is sliced from the original audio via ffmpeg and re-encoded to
 Opus/WebM for consistent output regardless of input format (mp3, wav, m4a,
@@ -22,15 +25,10 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
-
-# If the gap between two consecutive VAD segments is less than this, they
-# belong to the same clip.
-_CLIP_GAP_THRESHOLD_S = 4.0
 
 # Clips shorter than this after clamping are skipped (not worth uploading).
 _MIN_CLIP_DURATION_S = 0.5
@@ -45,64 +43,20 @@ _SNAP_SEARCH_WINDOW_S = 5.0
 # Minimum silence/gap duration to count as a valid snap target.
 _MIN_PAUSE_FOR_SNAP_S = 0.15
 
-# Topic-level clips shorter than this are skipped — too short to be useful.
-_MIN_TOPIC_CLIP_DURATION_S = 15.0
-
 
 @dataclass
 class ClipGroup:
-    """A group of consecutive VAD segments that form one clip."""
+    """A topic segment that becomes one clip."""
 
     start: float
     end: float
+    label: str = ""
+    segment_type: str = "other"
     types: set[str] = field(default_factory=set)
 
     @property
     def duration(self) -> float:
         return self.end - self.start
-
-
-def group_segments_into_clips(vad_segments: list[dict]) -> list[ClipGroup]:
-    """Group consecutive VAD segments into clips.
-
-    Rules:
-    - If the gap between adjacent segments is < 4s, same clip.
-    - If the gap is >= 4s, new clip.
-    - Skip clips that contain only silence (must have at least one speech or
-      music segment).
-    """
-    if not vad_segments:
-        return []
-
-    clips: list[ClipGroup] = []
-    current = ClipGroup(
-        start=vad_segments[0]["start"],
-        end=vad_segments[0]["end"],
-        types={vad_segments[0]["type"]},
-    )
-
-    for seg in vad_segments[1:]:
-        gap = seg["start"] - current.end
-        if gap < _CLIP_GAP_THRESHOLD_S:
-            # Extend current clip
-            current.end = seg["end"]
-            current.types.add(seg["type"])
-        else:
-            # Finalize current clip and start a new one
-            clips.append(current)
-            current = ClipGroup(
-                start=seg["start"],
-                end=seg["end"],
-                types={seg["type"]},
-            )
-
-    # Don't forget the last clip
-    clips.append(current)
-
-    # Filter out silence-only clips
-    clips = [c for c in clips if c.types - {"silence"}]
-
-    return clips
 
 
 def _get_audio_duration(audio_path: str) -> float | None:
@@ -178,6 +132,48 @@ def _slice_audio(
         return False
     except Exception:
         logger.exception("Clips: ffmpeg slice error for [%.1f-%.1f]", start, end)
+        return False
+
+
+def _encode_full_audio(audio_path: str, output_path: str) -> bool:
+    """Re-encode a full audio file to Opus/WebM.
+
+    Used for the fallback case where no segments exist and we upload the
+    entire lesson as a single clip.
+
+    Returns True on success, False on failure.
+    """
+    import imageio_ffmpeg
+
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-i", audio_path,
+        "-vn",
+        "-c:a", "libopus",
+        "-b:a", "64k",
+        output_path,
+    ]
+    logger.debug("Clips: encoding full audio — %s", " ".join(cmd))
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=300)
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")
+            logger.error("Clips: ffmpeg encode failed (rc=%d): %s", result.returncode, stderr[:500])
+            return False
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < _MIN_CLIP_FILE_BYTES:
+            logger.error("Clips: ffmpeg produced empty/too-small output for %s", audio_path)
+            return False
+
+        return True
+    except subprocess.TimeoutExpired:
+        logger.error("Clips: ffmpeg encode timed out for full audio")
+        return False
+    except Exception:
+        logger.exception("Clips: ffmpeg encode error for full audio")
         return False
 
 
@@ -337,8 +333,8 @@ def _snap_llm_boundaries(
 def _groups_from_llm_segments(llm_segments: list[dict]) -> list[ClipGroup]:
     """Convert LLM topic segments into ClipGroups.
 
-    Each LLM segment becomes exactly one clip. The label is stored on the
-    ClipGroup so it can be included in clip metadata.
+    Each LLM segment becomes exactly one clip. The label and type are stored
+    on the ClipGroup so they can be included in clip metadata.
 
     Returns an empty list if anything is wrong with the input.
     """
@@ -352,235 +348,73 @@ def _groups_from_llm_segments(llm_segments: list[dict]) -> list[ClipGroup]:
             continue
         if end <= start:
             continue
-        g = ClipGroup(start=start, end=end, types={"speech", "music"})
-        g.label = label  # type: ignore[attr-defined]
+        g = ClipGroup(
+            start=start,
+            end=end,
+            label=label,
+            segment_type=str(seg.get("type", "other")).strip(),
+            types={"speech", "music"},
+        )
         groups.append(g)
     return groups
 
 
-@dataclass
-class SubClip:
-    """A single sub-clip within a lesson segment, derived from Claude's output."""
+def _slice_upload_clips(
+    clip_groups: list[ClipGroup],
+    lesson_id: uuid.UUID,
+    audio_file_path: str,
+    supabase_url: str,
+    service_role_key: str,
+) -> list[dict]:
+    """Slice audio for each clip group, upload to Supabase, return metadata."""
+    metadata: list[dict] = []
+    temp_dir = tempfile.mkdtemp(prefix="orpheus_clips_")
 
-    start: float
-    end: float
-    label: str
-    role: str  # teacher_demo, student_play, student_attempt, best_attempt, ...
-    segment_index: int
-    segment_label: str
-    context: str | None = None
-    attempt_number: int | None = None
-    shareable: bool = False
+    try:
+        for idx, group in enumerate(clip_groups):
+            clip_path = os.path.join(temp_dir, f"clip_{idx:03d}.webm")
 
-    @property
-    def duration(self) -> float:
-        return self.end - self.start
+            if not _slice_audio(audio_file_path, group.start, group.end, clip_path):
+                logger.warning("Clips[%s]: skipping clip %d — slice failed", lesson_id, idx)
+                continue
 
+            with open(clip_path, "rb") as f:
+                clip_bytes = f.read()
 
-def _expand_to_speech_context(
-    start: float,
-    end: float,
-    vad_segments: list[dict],
-    gap_threshold: float = _CLIP_GAP_THRESHOLD_S,
-) -> tuple[float, float]:
-    """Expand clip boundaries to include adjacent speech context.
+            public_url = _upload_clip(
+                clip_bytes, lesson_id, idx, supabase_url, service_role_key,
+            )
+            if public_url is None:
+                logger.warning("Clips[%s]: skipping clip %d — upload failed", lesson_id, idx)
+                continue
 
-    When a clip is defined by music refs, the boundaries cover the playing
-    portions but may miss the teacher's instruction before the first attempt
-    and feedback after the last.  This extends boundaries to include any
-    speech VAD segment that is immediately adjacent (within *gap_threshold*
-    seconds), so the full teaching moment is audible in one clip.
-    """
-    if not vad_segments:
-        return start, end
+            clip_meta: dict = {
+                "index": idx,
+                "start": round(group.start, 3),
+                "end": round(group.end, 3),
+                "duration": round(group.duration, 3),
+                "types": sorted(group.types - {"silence"}),
+                "url": public_url,
+                "label": group.label or None,
+                "segment_type": group.segment_type,
+                "shared_with_parent": False,
+            }
 
-    sorted_segs = sorted(vad_segments, key=lambda s: float(s["start"]))
+            metadata.append(clip_meta)
 
-    # Include any speech that overlaps with the current range
-    for seg in sorted_segs:
-        if seg["type"] != "speech":
-            continue
-        s, e = float(seg["start"]), float(seg["end"])
-        if s < end and e > start:  # overlaps
-            start = min(start, s)
-            end = max(end, e)
-
-    # Extend to the closest preceding speech segment if within threshold
-    for seg in reversed(sorted_segs):
-        if seg["type"] != "speech":
-            continue
-        s, e = float(seg["start"]), float(seg["end"])
-        if e <= start:
-            if start - e <= gap_threshold:
-                start = s
-            break
-
-    # Extend to the closest following speech segment if within threshold
-    for seg in sorted_segs:
-        if seg["type"] != "speech":
-            continue
-        s, e = float(seg["start"]), float(seg["end"])
-        if s >= end:
-            if s - end <= gap_threshold:
-                end = e
-            break
-
-    return start, end
-
-
-def _resolve_music_refs(
-    music_refs: list[str],
-    music_ref_map: dict[str, dict],
-) -> tuple[float, float] | None:
-    """Resolve a list of MUSIC-N references to a (start, end) time range.
-
-    Returns the min start and max end across all valid refs, or None if
-    no refs could be resolved.
-    """
-    starts: list[float] = []
-    ends: list[float] = []
-    for ref in music_refs:
-        boundaries = music_ref_map.get(ref)
-        if boundaries is not None:
-            starts.append(float(boundaries["start"]))
-            ends.append(float(boundaries["end"]))
-        else:
-            logger.warning("Clips: unknown music ref %r — skipping", ref)
-    if not starts:
-        return None
-    return min(starts), max(ends)
-
-
-def _extract_subclips(
-    llm_segments: list[dict],
-    music_ref_map: dict[str, dict] | None = None,
-    vad_segments: list[dict] | None = None,
-) -> tuple[list[SubClip], bool]:
-    """Extract individual sub-clips from hierarchical LLM segments.
-
-    Each segment may contain a ``clips`` array with individual clips (attempts,
-    demos, run-throughs). Falls back to one clip per segment if no nested clips
-    are present.
-
-    When *music_ref_map* is provided, clips with ``music_refs`` are resolved
-    to exact VAD boundaries (no timestamp snapping needed).  When
-    *vad_segments* is also provided, ref-resolved boundaries are expanded
-    to include adjacent speech context so the full teaching moment
-    (instruction, playing, feedback) is captured in one clip.  Clips without
-    ``music_refs`` fall back to ``start_seconds`` / ``end_seconds``.
-
-    Returns
-    -------
-    tuple[list[SubClip], bool]
-        The list of extracted sub-clips, and a boolean indicating whether
-        all clips were resolved via music_refs (True = skip snapping).
-    """
-    subclips: list[SubClip] = []
-    all_from_refs = True  # Track whether every clip used music_refs
-
-    for seg_idx, seg in enumerate(llm_segments):
+            try:
+                os.unlink(clip_path)
+            except OSError:
+                pass
+    finally:
         try:
-            seg_start = float(seg["start_seconds"])
-            seg_end = float(seg["end_seconds"])
-            seg_label = str(seg.get("label", "")).strip()
-        except (KeyError, TypeError, ValueError):
-            continue
-        if seg_end <= seg_start or not seg_label:
-            continue
+            for f in os.listdir(temp_dir):
+                os.unlink(os.path.join(temp_dir, f))
+            os.rmdir(temp_dir)
+        except OSError:
+            pass
 
-        clips_list = seg.get("clips")
-        if isinstance(clips_list, list) and clips_list:
-            for clip in clips_list:
-                if not isinstance(clip, dict):
-                    continue
-
-                c_label = str(clip.get("label", seg_label)).strip()
-                c_role = str(clip.get("role", "student_play")).strip()
-
-                # --- Try music_refs first (new format) ---
-                refs = clip.get("music_refs")
-                if (
-                    music_ref_map
-                    and isinstance(refs, list)
-                    and len(refs) > 0
-                ):
-                    resolved = _resolve_music_refs(refs, music_ref_map)
-                    if resolved is not None:
-                        c_start, c_end = resolved
-                        # Expand to include adjacent speech context
-                        if vad_segments:
-                            c_start, c_end = _expand_to_speech_context(
-                                c_start, c_end, vad_segments,
-                            )
-                    else:
-                        logger.warning(
-                            "Clips: all music_refs invalid for clip %r — skipping",
-                            c_label,
-                        )
-                        continue
-                else:
-                    # --- Legacy format: explicit timestamps ---
-                    all_from_refs = False
-                    try:
-                        c_start = float(clip["start_seconds"])
-                        c_end = float(clip["end_seconds"])
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    if c_end <= c_start:
-                        continue
-
-                subclips.append(SubClip(
-                    start=c_start,
-                    end=c_end,
-                    label=c_label,
-                    role=c_role,
-                    segment_index=seg_idx,
-                    segment_label=seg_label,
-                    context=clip.get("context"),
-                    attempt_number=clip.get("attempt_number"),
-                    shareable=clip.get("shareable", False) is True,
-                ))
-        else:
-            # No nested clips — create a single clip spanning the segment
-            all_from_refs = False
-            subclips.append(SubClip(
-                start=seg_start,
-                end=seg_end,
-                label=seg_label,
-                role="student_play",
-                segment_index=seg_idx,
-                segment_label=seg_label,
-            ))
-
-    return subclips, all_from_refs
-
-
-def _snap_subclip_boundaries(
-    subclips: list[SubClip],
-    vad_segments: list[dict],
-) -> list[SubClip]:
-    """Snap sub-clip boundaries to natural pauses from VAD data.
-
-    Adjusts each clip's start/end to the nearest silence gap, constrained
-    so clips don't overlap or become too short.
-    """
-    if not subclips or not vad_segments:
-        return subclips
-
-    pauses = _find_pause_points(vad_segments)
-    if not pauses:
-        return subclips
-
-    for clip in subclips:
-        snapped_start = _nearest_pause_point(clip.start, pauses)
-        snapped_end = _nearest_pause_point(clip.end, pauses)
-
-        # Ensure minimum duration after snapping
-        if (snapped_end - snapped_start) >= _MIN_CLIP_DURATION_S:
-            clip.start = snapped_start
-            clip.end = snapped_end
-
-    return subclips
+    return metadata
 
 
 def run_clips(
@@ -590,9 +424,12 @@ def run_clips(
     supabase_url: str,
     service_role_key: str,
     llm_segments: list[dict] | None = None,
-    music_ref_map: dict[str, dict] | None = None,
 ) -> list[dict]:
-    """Process audio into clips and upload to Supabase Storage.
+    """Slice full lesson audio by topic and upload all clips to Supabase Storage.
+
+    Every second of the lesson is preserved. The LLM identifies topic
+    boundaries; the audio is sliced at those boundaries. If the LLM returns
+    no segments, the full audio is uploaded as a single clip.
 
     Parameters
     ----------
@@ -601,19 +438,14 @@ def run_clips(
     audio_file_path:
         Path to the raw audio file on disk.
     vad_segments:
-        VAD segment list from the lesson record.
+        VAD segment list from the lesson record (used for boundary snapping).
     supabase_url:
         Supabase project URL.
     service_role_key:
         Supabase service role key for storage uploads.
     llm_segments:
         Optional topic segments from the narrative LLM. When provided, each
-        segment becomes one clip with a descriptive label instead of the
-        default gap-based grouping.
-    music_ref_map:
-        Optional mapping from MUSIC-N labels to VAD start/end times.
-        When provided, clips with ``music_refs`` are resolved to exact
-        VAD boundaries — no timestamp snapping needed.
+        segment becomes one clip with a descriptive label.
 
     Returns
     -------
@@ -629,129 +461,77 @@ def run_clips(
             logger.error("Clips[%s]: audio file not found at %s", lesson_id, audio_file_path)
             return []
 
-        # --- Determine clip list ---
-        # Try hierarchical sub-clips first (new path), fall back to
-        # segment-level or gap-based grouping (legacy path).
-        subclips: list[SubClip] | None = None
-        clip_groups: list[ClipGroup] | None = None
-
-        if llm_segments:
-            subclips, all_from_refs = _extract_subclips(
-                llm_segments, music_ref_map, vad_segments,
-            )
-            if subclips:
-                # Filter out topic-level clips that are too short to be useful
-                pre_filter = len(subclips)
-                subclips = [
-                    sc for sc in subclips
-                    if sc.duration >= _MIN_TOPIC_CLIP_DURATION_S
-                ]
-                if len(subclips) < pre_filter:
-                    logger.info(
-                        "Clips[%s]: filtered %d/%d sub-clips below %.0fs minimum duration",
-                        lesson_id, pre_filter - len(subclips), pre_filter,
-                        _MIN_TOPIC_CLIP_DURATION_S,
-                    )
-
-                if all_from_refs:
-                    logger.info(
-                        "Clips[%s]: using %d ref-resolved sub-clips (no snapping needed)",
-                        lesson_id, len(subclips),
-                    )
-                else:
-                    subclips = _snap_subclip_boundaries(subclips, vad_segments)
-                    logger.info(
-                        "Clips[%s]: using %d hierarchical sub-clips from %d LLM segments (snapped)",
-                        lesson_id, len(subclips), len(llm_segments),
-                    )
-            else:
-                # Nested clips extraction failed — fall back to segment-level
-                logger.warning("Clips[%s]: no sub-clips extracted, falling back to segment-level clips", lesson_id)
-                snapped = _snap_llm_boundaries(llm_segments, vad_segments)
-                clip_groups = _groups_from_llm_segments(snapped)
-                if clip_groups:
-                    logger.info("Clips[%s]: using %d LLM topic segments as clip boundaries", lesson_id, len(clip_groups))
-
-        if subclips is None and clip_groups is None:
-            clip_groups = group_segments_into_clips(vad_segments)
-
-        # --- Clamp boundaries to actual audio duration ---
+        # Probe audio duration
         audio_duration = _get_audio_duration(audio_file_path)
         if audio_duration is not None and audio_duration > 0:
             logger.info("Clips[%s]: audio file duration is %.1fs", lesson_id, audio_duration)
         else:
-            logger.warning("Clips[%s]: could not probe audio duration — clips may have inaccurate durations", lesson_id)
+            logger.warning("Clips[%s]: could not probe audio duration", lesson_id)
 
-        # --- Process sub-clips (hierarchical path) ---
-        if subclips is not None:
-            if audio_duration and audio_duration > 0:
-                clamped_sc: list[SubClip] = []
-                for sc in subclips:
-                    if sc.start >= audio_duration:
-                        continue
-                    if sc.end > audio_duration:
-                        sc.end = audio_duration
-                    if sc.duration < _MIN_CLIP_DURATION_S:
-                        continue
-                    clamped_sc.append(sc)
-                subclips = clamped_sc
+        # --- Build clip list from LLM segments ---
+        clip_groups: list[ClipGroup] | None = None
 
-            if not subclips:
-                logger.warning("Clips[%s]: no sub-clips remaining after clamping", lesson_id)
-                return []
+        if llm_segments:
+            # Snap internal boundaries to natural pauses
+            snapped = _snap_llm_boundaries(llm_segments, vad_segments)
+            clip_groups = _groups_from_llm_segments(snapped)
+            if clip_groups:
+                logger.info(
+                    "Clips[%s]: using %d LLM topic segments as clip boundaries",
+                    lesson_id, len(clip_groups),
+                )
 
-            metadata: list[dict] = []
+        # --- Fallback: upload full audio as a single clip ---
+        if not clip_groups:
+            logger.info(
+                "Clips[%s]: no LLM segments — uploading full audio as single clip",
+                lesson_id,
+            )
+            duration = audio_duration or 0.0
+            clip_groups = [
+                ClipGroup(
+                    start=0.0,
+                    end=duration,
+                    label="Full lesson",
+                    segment_type="other",
+                    types={"speech", "music"},
+                ),
+            ]
+
+            # For full-audio fallback, encode the entire file
             temp_dir = tempfile.mkdtemp(prefix="orpheus_clips_")
             try:
-                for idx, sc in enumerate(subclips):
-                    clip_path = os.path.join(temp_dir, f"clip_{idx:03d}.webm")
+                full_clip_path = os.path.join(temp_dir, "clip_000.webm")
+                if not _encode_full_audio(audio_file_path, full_clip_path):
+                    logger.error("Clips[%s]: failed to encode full audio", lesson_id)
+                    return []
 
-                    if not _slice_audio(audio_file_path, sc.start, sc.end, clip_path):
-                        logger.warning("Clips[%s]: skipping sub-clip %d — slice failed", lesson_id, idx)
-                        continue
+                with open(full_clip_path, "rb") as f:
+                    clip_bytes = f.read()
 
-                    with open(clip_path, "rb") as f:
-                        clip_bytes = f.read()
+                public_url = _upload_clip(
+                    clip_bytes, lesson_id, 0, supabase_url, service_role_key,
+                )
+                if public_url is None:
+                    logger.error("Clips[%s]: failed to upload full audio clip", lesson_id)
+                    return []
 
-                    public_url = _upload_clip(
-                        clip_bytes, lesson_id, idx, supabase_url, service_role_key,
-                    )
-                    if public_url is None:
-                        logger.warning("Clips[%s]: skipping sub-clip %d — upload failed", lesson_id, idx)
-                        continue
-
-                    # Flat clip metadata with hierarchical context fields.
-                    # Backward-compatible: old fields (index, start, end,
-                    # duration, types, url, label, shared_with_parent) are
-                    # always present. New fields (segment_index, segment_label,
-                    # role, context, attempt_number, shareable) are additive.
-                    clip_meta: dict = {
-                        "index": idx,
-                        "start": round(sc.start, 3),
-                        "end": round(sc.end, 3),
-                        "duration": round(sc.duration, 3),
-                        "types": ["music"],
-                        "url": public_url,
-                        "label": sc.label,
-                        "shared_with_parent": sc.shareable,
-                        # Hierarchical context
-                        "segment_index": sc.segment_index,
-                        "segment_label": sc.segment_label,
-                        "role": sc.role,
-                    }
-                    if sc.context:
-                        clip_meta["context"] = sc.context
-                    if sc.attempt_number is not None:
-                        clip_meta["attempt_number"] = sc.attempt_number
-                    if sc.shareable:
-                        clip_meta["shareable"] = True
-
-                    metadata.append(clip_meta)
-
-                    try:
-                        os.unlink(clip_path)
-                    except OSError:
-                        pass
+                elapsed = time.time() - t0
+                logger.info(
+                    "Clips[%s]: done in %.1fs — uploaded full audio as single clip",
+                    lesson_id, elapsed,
+                )
+                return [{
+                    "index": 0,
+                    "start": 0.0,
+                    "end": round(duration, 3),
+                    "duration": round(duration, 3),
+                    "types": ["music", "speech"],
+                    "url": public_url,
+                    "label": "Full lesson",
+                    "segment_type": "other",
+                    "shared_with_parent": False,
+                }]
             finally:
                 try:
                     for f in os.listdir(temp_dir):
@@ -760,20 +540,9 @@ def run_clips(
                 except OSError:
                     pass
 
-            elapsed = time.time() - t0
-            logger.info(
-                "Clips[%s]: done in %.1fs — %d sub-clips uploaded",
-                lesson_id, elapsed, len(metadata),
-            )
-            return metadata
-
-        # --- Process segment-level / gap-based clips (legacy path) ---
-        if not clip_groups:
-            logger.warning("Clips[%s]: no non-silence clips found", lesson_id)
-            return []
-
+        # --- Clamp boundaries to actual audio duration ---
         if audio_duration is not None and audio_duration > 0:
-            clamped_cg: list[ClipGroup] = []
+            clamped: list[ClipGroup] = []
             for g in clip_groups:
                 if g.start >= audio_duration:
                     logger.warning(
@@ -793,73 +562,22 @@ def run_clips(
                         lesson_id, g.start, g.duration,
                     )
                     continue
-                clamped_cg.append(g)
-            clip_groups = clamped_cg
+                clamped.append(g)
+            clip_groups = clamped
 
         if not clip_groups:
-            logger.warning("Clips[%s]: no clips remaining after clamping to audio duration", lesson_id)
+            logger.warning("Clips[%s]: no clips remaining after clamping", lesson_id)
             return []
 
-        logger.info("Clips[%s]: %d clip groups from %d VAD segments", lesson_id, len(clip_groups), len(vad_segments))
-
-        metadata = []
-        temp_dir = tempfile.mkdtemp(prefix="orpheus_clips_")
-
-        try:
-            for idx, group in enumerate(clip_groups):
-                clip_path = os.path.join(temp_dir, f"clip_{idx:03d}.webm")
-
-                # Slice audio
-                if not _slice_audio(audio_file_path, group.start, group.end, clip_path):
-                    logger.warning("Clips[%s]: skipping clip %d — slice failed", lesson_id, idx)
-                    continue
-
-                # Read clip bytes for upload
-                with open(clip_path, "rb") as f:
-                    clip_bytes = f.read()
-
-                # Upload to Supabase Storage
-                public_url = _upload_clip(
-                    clip_bytes, lesson_id, idx, supabase_url, service_role_key,
-                )
-                if public_url is None:
-                    logger.warning("Clips[%s]: skipping clip %d — upload failed", lesson_id, idx)
-                    continue
-
-                clip_meta = {
-                    "index": idx,
-                    "start": round(group.start, 3),
-                    "end": round(group.end, 3),
-                    "duration": round(group.duration, 3),
-                    "types": sorted(group.types - {"silence"}),
-                    "url": public_url,
-                    "shared_with_parent": False,
-                }
-                # Include LLM-generated label when available
-                label = getattr(group, "label", None)
-                if label:
-                    clip_meta["label"] = label
-
-                metadata.append(clip_meta)
-
-                # Clean up temp clip file immediately
-                try:
-                    os.unlink(clip_path)
-                except OSError:
-                    pass
-
-        finally:
-            # Clean up temp directory
-            try:
-                for f in os.listdir(temp_dir):
-                    os.unlink(os.path.join(temp_dir, f))
-                os.rmdir(temp_dir)
-            except OSError:
-                pass
+        # --- Slice and upload all topic clips ---
+        metadata = _slice_upload_clips(
+            clip_groups, lesson_id, audio_file_path,
+            supabase_url, service_role_key,
+        )
 
         elapsed = time.time() - t0
         logger.info(
-            "Clips[%s]: done in %.1fs — %d clips uploaded out of %d groups",
+            "Clips[%s]: done in %.1fs — %d topic clips uploaded out of %d segments",
             lesson_id, elapsed, len(metadata), len(clip_groups),
         )
 

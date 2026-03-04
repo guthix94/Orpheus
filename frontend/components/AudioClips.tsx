@@ -11,6 +11,7 @@ export interface Clip {
   types: string[];
   url: string;
   label?: string;
+  segment_type?: string;
   shared_with_parent?: boolean;
 }
 
@@ -232,17 +233,22 @@ export default function AudioClips({
       <div className="flex items-center gap-2">
         <Volume2 size={14} className="text-amber" />
         <h3 className="text-xs font-semibold uppercase tracking-widest text-stone">
-          Audio Clips
+          Lesson Audio
         </h3>
       </div>
 
       <div className="space-y-2">
-        {clips.map((clip) => (
+        {clips.map((clip, i) => (
           <div
             key={clip.index}
             className="group/clip rounded-xl border border-sand bg-warm-white px-4 py-3 shadow-card transition-shadow hover:shadow-card-hover"
           >
             <div className="flex items-start gap-3">
+              {/* Segment number */}
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ivory text-xs font-semibold text-stone tabular-nums">
+                {i + 1}
+              </span>
+
               {/* Play / Pause button */}
               <button
                 onClick={() => togglePlay(clip.index)}
