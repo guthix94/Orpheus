@@ -119,61 +119,29 @@ use the most specific short name possible (e.g., "Clavichord piece" not \
 "Clavichord piece (unspecified)"). Scales and exercises count as pieces. \
 Do not list the same piece twice with different descriptions.
 
-LESSON SEGMENTS WITH TOPIC-LEVEL CLIPS: Divide the lesson into topic segments \
-and create 1-2 clips per segment that capture the complete teaching moment.
+LESSON SEGMENTS (TOPIC BOUNDARIES): Divide the lesson into topic segments. \
+The full audio will be sliced at these boundaries so every second of the \
+lesson is preserved and accessible as a topic clip.
 
 Each segment represents a natural topic section (e.g., "Scale warm-up", \
 "Vivaldi — string crossings drill", "Sight-reading new piece"). Each segment \
-has start_seconds, end_seconds, label, and type. Segments should cover the \
-full lesson without gaps or overlaps. Aim for 2-8 segments.
+has start_seconds, end_seconds, label, and type.
+
+CRITICAL: Segments MUST cover the entire lesson from start to finish with \
+no gaps and no overlaps. The first segment starts at 0.0 and the last \
+segment ends at the lesson duration. Aim for 2-8 segments.
 
 Segment types: "warmup", "run_through", "focused_practice", "sight_reading", \
 "technique_work", "review", "other".
 
-Within each segment, create 1-2 clips that capture the COMPLETE teaching \
-moment — the teacher's instruction, all student attempts, corrections between \
-them, and final feedback — all in one clip. A "Vivaldi string crossings drill" \
-with a teacher demo, three student attempts, and corrections should be ONE \
-clip, not five.
-
-CRITICAL — clip boundaries: Reference ALL the MUSIC-N segments for each clip \
-using "music_refs" (a list of MUSIC-N strings). Do NOT invent timestamps for \
-clips. A topic-level clip should include every MUSIC-N segment from that \
-activity. For example, if a drill has MUSIC-3 through MUSIC-6:
-"music_refs": ["MUSIC-3", "MUSIC-4", "MUSIC-5", "MUSIC-6"]
-The clip audio will span from MUSIC-3's start to MUSIC-6's end, including \
-all speech between the segments.
-
-Clip roles — assign one of these:
-- "teacher_demo": ONLY when the clip is purely a teacher demonstrating with \
-no student playing at all. This is rare.
-- "student_play": Everything else — drills, run-throughs, sight-reading, \
-mixed teaching moments with both teacher and student. This is the default.
-
-For each clip, include:
-- label: Short, descriptive, and context-aware. Include what was practiced \
-and the type of work. Do NOT include attempt counts like "(7 attempts)" or \
-"(4 attempts)" — keep labels clean. \
+Segment labels should be short, descriptive, and context-aware. Include what \
+was practiced and the type of work. \
 Good: "E major scale — position shift practice" \
 Good: "Vivaldi mm. 1-44 — run-through" \
 Good: "String crossing passage — slow practice drill" \
 Bad: "E major scale — position shift practice (4 attempts)" \
 Bad: "Attempt 1" \
 Bad: "Scale"
-- context: One sentence summarizing the teacher's key instruction or focus \
-for this clip. Keep it brief and meaningful.
-- shareable: true if this clip is worth sharing with parents (best moments, \
-clean run-throughs, notable achievements). Be selective — only 1-3 clips \
-per lesson should be shareable.
-
-A typical 30-minute lesson should produce 2-4 clips total. Prefer fewer, \
-longer clips. Each clip should be at least 30 seconds. Only split into \
-separate clips for clearly distinct activities. Never split a single drill \
-into multiple clips.
-
-Segments with only one music section (a full run-through, a single scale) \
-should still have a clips array with one entry referencing that single MUSIC \
-segment.
 
 Respond in JSON format ONLY (no markdown fences):
 {
@@ -188,29 +156,13 @@ Respond in JSON format ONLY (no markdown fences):
             "start_seconds": 0.0,
             "end_seconds": 90.0,
             "label": "A minor scale warm-up",
-            "type": "warmup",
-            "clips": [
-                {
-                    "music_refs": ["MUSIC-1"],
-                    "label": "3-octave A minor scale",
-                    "role": "student_play"
-                }
-            ]
+            "type": "warmup"
         },
         {
             "start_seconds": 90.0,
             "end_seconds": 460.0,
             "label": "Vivaldi — string crossings drill",
-            "type": "focused_practice",
-            "clips": [
-                {
-                    "music_refs": ["MUSIC-3", "MUSIC-4", "MUSIC-5", "MUSIC-6"],
-                    "label": "String crossing passage — bow arm relaxation drill",
-                    "role": "student_play",
-                    "context": "Focus on relaxing bow arm at the crossing point",
-                    "shareable": true
-                }
-            ]
+            "type": "focused_practice"
         }
     ]
 }
@@ -324,82 +276,10 @@ def generate_summaries(
     )
 
 
-_VALID_CLIP_ROLES = {
-    "teacher_demo", "student_play",
-}
-
 _VALID_SEGMENT_TYPES = {
     "warmup", "run_through", "focused_practice", "sight_reading",
     "technique_work", "review", "other",
 }
-
-
-def _validate_clip(clip: dict, seg_start: float, seg_end: float) -> dict | None:
-    """Validate a single clip within a lesson segment.
-
-    Accepts two formats:
-    - New format: ``music_refs`` (list of MUSIC-N strings) — no timestamps needed.
-    - Legacy format: ``start_seconds`` / ``end_seconds`` — backward compatible.
-
-    Returns a cleaned clip dict or None if invalid.
-    """
-    if not isinstance(clip, dict):
-        return None
-
-    label = str(clip.get("label", "")).strip()
-    role = str(clip.get("role", "student_play")).strip()
-    if not label:
-        return None
-
-    if role not in _VALID_CLIP_ROLES:
-        role = "student_play"
-
-    # --- Determine boundary format ---
-    music_refs = clip.get("music_refs")
-    has_refs = (
-        isinstance(music_refs, list)
-        and len(music_refs) > 0
-        and all(isinstance(r, str) for r in music_refs)
-    )
-
-    if has_refs:
-        # New format: boundaries come from MUSIC-N references
-        result: dict = {
-            "music_refs": music_refs,
-            "label": label,
-            "role": role,
-        }
-    else:
-        # Legacy format: explicit timestamps
-        try:
-            start = float(clip["start_seconds"])
-            end = float(clip["end_seconds"])
-        except (KeyError, TypeError, ValueError):
-            return None
-        if end <= start:
-            return None
-        result = {
-            "start_seconds": round(start, 3),
-            "end_seconds": round(end, 3),
-            "label": label,
-            "role": role,
-        }
-
-    # Optional fields
-    if clip.get("attempt_number") is not None:
-        try:
-            result["attempt_number"] = int(clip["attempt_number"])
-        except (TypeError, ValueError):
-            pass
-
-    context = clip.get("context")
-    if context and isinstance(context, str):
-        result["context"] = context.strip()
-
-    if clip.get("shareable") is True:
-        result["shareable"] = True
-
-    return result
 
 
 def _validate_lesson_segments(raw_segments: object) -> list[dict] | None:
@@ -440,17 +320,6 @@ def _validate_lesson_segments(raw_segments: object) -> list[dict] | None:
         seg_type = str(seg.get("type", "other")).strip()
         if seg_type in _VALID_SEGMENT_TYPES:
             segment["type"] = seg_type
-
-        # Validate nested clips
-        raw_clips = seg.get("clips")
-        if isinstance(raw_clips, list) and raw_clips:
-            valid_clips = []
-            for clip in raw_clips:
-                validated_clip = _validate_clip(clip, start, end)
-                if validated_clip is not None:
-                    valid_clips.append(validated_clip)
-            if valid_clips:
-                segment["clips"] = valid_clips
 
         validated.append(segment)
 

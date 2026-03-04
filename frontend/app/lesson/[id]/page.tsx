@@ -652,17 +652,6 @@ export default function LessonSummaryPage() {
             </div>
           )}
 
-          {/* Audio clips */}
-          {lesson?.clips && lesson.clips.length > 0 && (
-            <FadeIn delay={300}>
-              <AudioClips
-                clips={lesson.clips}
-                showShareToggle={!!student?.parent_portal_token}
-                onToggleShare={handleToggleClipShare}
-              />
-            </FadeIn>
-          )}
-
           {/* Parent portal link */}
           {student?.parent_portal_token && (
             <FadeIn delay={350}>
@@ -710,6 +699,17 @@ export default function LessonSummaryPage() {
           </FadeIn>
         </div>
       </div>
+
+      {/* ── Lesson Audio by Topic ── */}
+      {lesson?.clips && lesson.clips.length > 0 && lesson.status === "completed" && (
+        <FadeIn delay={300}>
+          <AudioClips
+            clips={lesson.clips}
+            showShareToggle={!!student?.parent_portal_token}
+            onToggleShare={handleToggleClipShare}
+          />
+        </FadeIn>
+      )}
 
       {/* ── Send to Parent Modal ── */}
       {parentText && student && (

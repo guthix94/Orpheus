@@ -423,7 +423,7 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
             # Pass LLM topic segments when available for smarter clip boundaries.
             clips_metadata: list[dict] = []
             clips_duration = 0.0
-            if audio_path and lesson.vad_segments:
+            if audio_path:
                 from processing.stages.clips import run_clips
 
                 logger.info("Pipeline[%s]: starting clips processing", lesson_id)
@@ -432,11 +432,10 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
                     clips_metadata = run_clips(
                         lesson_id=lesson_id,
                         audio_file_path=audio_path,
-                        vad_segments=lesson.vad_segments,
+                        vad_segments=lesson.vad_segments or [],
                         supabase_url=settings.supabase_url,
                         service_role_key=settings.supabase_service_role_key,
                         llm_segments=narrative.lesson_segments,
-                        music_ref_map=music_ref_map or None,
                     )
                     clips_duration = time.time() - t0
                     logger.info(
@@ -449,16 +448,6 @@ def run_pipeline(lesson_id: uuid.UUID, database_url: str) -> None:
 
                 if clips_metadata:
                     lesson.clips = clips_metadata
-
-                    # Delete raw audio from Railway disk now that clips are in Supabase
-                    try:
-                        os.remove(audio_path)
-                        logger.info("Pipeline[%s]: deleted raw audio %s", lesson_id, audio_path)
-                    except OSError:
-                        logger.warning(
-                            "Pipeline[%s]: failed to delete raw audio %s",
-                            lesson_id, audio_path,
-                        )
 
             # Build processing metadata
             metadata: dict = {

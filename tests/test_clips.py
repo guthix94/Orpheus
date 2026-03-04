@@ -9,7 +9,6 @@ from processing.stages.clips import (
     _nearest_pause_point,
     _snap_llm_boundaries,
     _groups_from_llm_segments,
-    group_segments_into_clips,
 )
 
 
