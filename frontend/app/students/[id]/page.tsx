@@ -428,6 +428,7 @@ function LessonsTab({
             piece={l.pieces_detected?.[0] ?? null}
             date={l.started_at}
             status={l.status}
+            summary={i === 0 ? l.teacher_summary : undefined}
           />
         </FadeIn>
       ))}

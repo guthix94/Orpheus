@@ -131,18 +131,27 @@ export default function StudentSelectPage() {
             )}
 
             {/* Add new student */}
-            {query.trim() && !hasExactMatch && (
-              <FadeIn delay={150}>
-                <button
-                  onClick={handleAddNew}
-                  disabled={creating}
-                  className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-card)] border-2 border-dashed border-amber/40 bg-amber-glow px-4 py-3.5 text-sm font-semibold text-amber transition-colors hover:border-amber/60 disabled:opacity-50"
-                >
-                  <UserPlus size={16} />
-                  {creating ? "Creating..." : `Add "${query.trim()}" as new student`}
-                </button>
-              </FadeIn>
-            )}
+            <FadeIn delay={150}>
+              <button
+                onClick={() => {
+                  if (query.trim() && !hasExactMatch) {
+                    handleAddNew();
+                  } else {
+                    setQuery("");
+                    inputRef.current?.focus();
+                  }
+                }}
+                disabled={creating}
+                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-card)] border-2 border-dashed border-amber/40 bg-amber-glow px-4 py-3.5 text-sm font-semibold text-amber transition-colors hover:border-amber/60 disabled:opacity-50"
+              >
+                <UserPlus size={16} />
+                {creating
+                  ? "Creating..."
+                  : query.trim() && !hasExactMatch
+                    ? `Add "${query.trim()}" as new student`
+                    : "Add new student"}
+              </button>
+            </FadeIn>
           </div>
         </FadeIn>
       </div>

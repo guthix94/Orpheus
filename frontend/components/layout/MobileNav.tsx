@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase";
 interface NavItem {
   href: string;
   label: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
 }
 
 const navItems: NavItem[] = [
@@ -50,7 +50,8 @@ export default function MobileNav() {
               >
                 <Icon
                   size={22}
-                  className={active ? "text-amber" : ""}
+                  strokeWidth={2}
+                  className={active ? "text-amber" : "text-stone"}
                 />
                 <span>{item.label}</span>
               </Link>
@@ -62,7 +63,7 @@ export default function MobileNav() {
             onClick={handleSignOut}
             className="flex w-full flex-col items-center justify-center gap-0.5 py-1.5 text-xs font-medium text-stone transition-colors duration-[var(--transition-fast)]"
           >
-            <LogOut size={22} />
+            <LogOut size={22} strokeWidth={2} className="text-stone" />
             <span>Sign Out</span>
           </button>
         </li>
