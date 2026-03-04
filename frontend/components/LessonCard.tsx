@@ -8,6 +8,7 @@ interface LessonCardProps {
   piece: string | null;
   date: string;
   status: "recording" | "processing" | "completed" | "failed" | "cancelled";
+  summary?: string | null;
 }
 
 const STATUS_CONFIG: Record<
@@ -46,6 +47,7 @@ export default function LessonCard({
   piece,
   date,
   status,
+  summary,
 }: LessonCardProps) {
   const initials = studentName
     .split(" ")
@@ -64,33 +66,46 @@ export default function LessonCard({
   return (
     <Link
       href={`/lesson/${id}`}
-      className="flex items-center gap-3.5 rounded-[var(--radius-card)] bg-warm-white p-4 shadow-card transition-shadow duration-[var(--transition-fast)] hover:shadow-card-hover"
+      className="block rounded-[var(--radius-card)] bg-warm-white p-4 shadow-card transition-shadow duration-[var(--transition-fast)] hover:shadow-card-hover"
     >
-      {/* Avatar */}
-      <div
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-charcoal ${avatarColor(studentName)}`}
-      >
-        {initials}
+      <div className="flex items-center gap-3.5">
+        {/* Avatar */}
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-charcoal ${avatarColor(studentName)}`}
+        >
+          {initials}
+        </div>
+
+        {/* Details */}
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-serif text-base font-semibold text-charcoal">
+            {studentName}
+          </p>
+          <p className="truncate text-xs text-stone">
+            {piece ?? "No piece detected"}
+          </p>
+        </div>
+
+        {/* Right side: date + status */}
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className="text-xs text-stone">{formatted}</span>
+          <span className="flex items-center gap-1.5 text-[11px] text-stone">
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+            {label}
+          </span>
+        </div>
       </div>
 
-      {/* Details */}
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-serif text-base font-semibold text-charcoal">
-          {studentName}
-        </p>
-        <p className="truncate text-xs text-stone">
-          {piece ?? "No piece detected"}
-        </p>
-      </div>
-
-      {/* Right side: date + status */}
-      <div className="flex shrink-0 flex-col items-end gap-1">
-        <span className="text-xs text-stone">{formatted}</span>
-        <span className="flex items-center gap-1.5 text-[11px] text-stone">
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
-          {label}
-        </span>
-      </div>
+      {summary && (
+        <div className="mt-3 border-t border-sand pt-3">
+          <p className="text-sm leading-relaxed text-slate line-clamp-4">
+            {summary}
+          </p>
+          <span className="mt-1.5 inline-block text-xs font-medium text-amber">
+            View full summary
+          </span>
+        </div>
+      )}
     </Link>
   );
 }
